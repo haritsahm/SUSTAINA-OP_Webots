@@ -1,0 +1,27 @@
+#VRML_SIM R2023b utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/samples/contests/robocup/protos/RobocupSoccerField.proto"
+EXTERNPROTO "../protos/SUSTAINA-OP.proto"
+
+WorldInfo {
+  basicTimeStep 8
+  contactProperties [
+    ContactProperties {
+      material2 "grass"
+      bounce 0.01
+      bounceVelocity 0.3
+    }
+  ]
+}
+Viewpoint {
+  orientation 0.0538000510277971 -0.9674174522352943 -0.24740458285969252 5.840919374838145
+  position -3.7117414939678826 -1.80524944327344 1.53430026133291
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+RobocupSoccerField {
+}

@@ -1,0 +1,36 @@
+#VRML_SIM R2023b utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/samples/contests/robocup/protos/RobocupSoccerField.proto"
+EXTERNPROTO "../protos/SUSTAINA-OP.proto"
+
+WorldInfo {
+  info [
+    "SUSTAINA-OP robot."
+    "The SUSTAINA-OP robot simulation model"
+  ]
+  title "SUSTAINA-OP"
+  basicTimeStep 8
+  contactProperties [
+    ContactProperties {
+      material2 "grass"
+      softCFM            0.0
+      maxContactJoints   10
+    }
+  ]
+}
+Viewpoint {
+  orientation 0.209 -0.619 -0.757 5.44
+  position -7.11 -5.15 4.75
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+RobocupSoccerField {
+    size "kid"
+}
+SUSTAINA-OP{
+  controller "SUSTAINA-OP_walking"
+}

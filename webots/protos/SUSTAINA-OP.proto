@@ -1,0 +1,1303 @@
+#VRML_SIM R2023b utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# This is a proto file for Webots for the SUSTAINA-OP
+# Extracted from: /home/hiroki/SUSTAINA-OP2-Webots-DEV/sustaina.urdf
+
+PROTO SUSTAINA-OP [
+  field  SFVec3f     translation     0 0 0
+  field  SFRotation  rotation        0 0 1 0
+  field  SFString    name            "SUSTAINA-OP"  # Is `Robot.name`.
+  field  SFString    controller      "void"         # Is `Robot.controller`.
+  field  MFString    controllerArgs  []             # Is `Robot.controllerArgs`.
+  field  SFString    customData      ""             # Is `Robot.customData`.
+  field  SFBool      supervisor      FALSE          # Is `Robot.supervisor`.
+  field  SFBool      synchronization TRUE           # Is `Robot.synchronization`.
+  field  SFBool      selfCollision   FALSE          # Is `Robot.selfCollision`.
+  field  MFNode      toolSlot        []             # Extend the robot with new nodes at the end of the arm.
+  field  SFBool      enable_backlash FALSE           # Enables backlash on all joints.
+]
+{
+  %{
+    local enable_backlash = fields.enable_backlash.value
+    local backlash = 0.01
+    local gearmass = 0.001
+
+    local b3msc1040_torque = 6.94
+    local b3msc1040_maxVelo = 7.05
+    local b3msc1040_staticFric = 0.088832
+    local b3msc1040_damping = 0.984
+
+    local b3msc1170_torque = 10.3
+    local b3msc1170_maxVelo = 5.91
+    local b3msc1170_staticFric = 0.09888
+    local b3msc1170_damping = 1.74
+
+    local positionresolution = 0.00153
+  }%
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    controller IS controller
+    controllerArgs IS controllerArgs
+    customData IS customData
+    supervisor IS supervisor
+    synchronization IS synchronization
+    selfCollision IS selfCollision
+    children [
+      Solid {
+        translation 0.000000 0.000000 0.372500
+        children [
+          Shape {
+            appearance DEF black PBRAppearance {
+              baseColor 0.500000 0.500000 0.500000
+              roughness 1.000000
+              metalness 0
+            }
+            geometry DEF Trunk Mesh {
+              url "../../meshes/stl/Trunk.stl"
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 0.000000 1.000000
+              anchor -0.005000 0.000000 0.179000
+              dampingConstant %{= b3msc1040_damping }%
+              staticFriction %{= b3msc1040_staticFric }%
+            }
+            device [
+              RotationalMotor {
+                name "head_yaw_joint"
+                maxVelocity %{= b3msc1040_maxVelo}%
+                minPosition -2.35619449019
+                maxPosition 2.35619449019
+                maxTorque %{=b3msc1040_torque}%
+              }
+              PositionSensor {
+                name "head_yaw_joint_sensor"
+                resolution %{=positionresolution}%
+              }
+            ]
+            endPoint Solid {
+              translation -0.005000 0.000000 0.179000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry DEF Head Mesh {
+                    url "../../meshes/stl/Head.stl"
+                  }
+                }
+                Solid {
+                  translation 0.042179 0.000000 0.043821
+                  rotation 0 1 0 0.785375
+                  children [
+                    Pose {
+                      translation 0.0 0 0
+                      #rotation 0.281085 -0.678598 0.678598 -2.59356
+                      rotation 0 0 0 0
+                      children [
+                        Camera {
+                          name "camera_sensor"
+                          fieldOfView 1.396263
+                          width 640
+                          height 480
+                          noise 0.007000
+                        }
+                      ]
+                    }
+                  ]
+                  name "camera_link"
+                }
+              ]
+              name "head_yaw_link"
+              boundingObject USE Head
+              physics Physics {
+                density -1
+                mass 0.094731
+                centerOfMass [ 0.005724 0.000000 0.060725 ]
+                inertiaMatrix [
+                  1.265380e-04 1.310850e-04 7.172500e-05
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 1.000000 0.000000
+              anchor -0.005000 0.078500 0.148000
+              dampingConstant %{= b3msc1040_damping }%
+              staticFriction %{= b3msc1040_staticFric }%
+            }
+            device [
+              RotationalMotor {
+                name "left_shoulder_pitch_joint"
+                maxVelocity %{= b3msc1040_maxVelo}%
+                minPosition -2.35619449019
+                maxPosition 2.35619449019
+                maxTorque %{=b3msc1040_torque}%
+              }
+              PositionSensor {
+                name "left_shoulder_pitch_joint_sensor"
+                resolution %{=positionresolution}%
+              }
+            ]
+            endPoint Solid {
+              translation -0.005000 0.078500 0.148000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry DEF Shoulder Mesh {
+                    url "../../meshes/stl/Shoulder.stl"
+                  }
+                }
+                HingeJoint {
+                  jointParameters HingeJointParameters {
+                    anchor 0.000000 0.030800 -0.025000
+                    dampingConstant %{= b3msc1040_damping }%
+                    staticFriction %{= b3msc1040_staticFric }%
+                  }
+                  device [
+                    RotationalMotor {
+                      name "left_shoulder_roll_joint"
+                      maxVelocity %{= b3msc1040_maxVelo}%
+                      maxPosition 3.14159265359
+                      maxTorque %{=b3msc1040_torque}%
+                    }
+                    PositionSensor {
+                      name "left_shoulder_roll_joint_sensor"
+                      resolution %{=positionresolution}%
+                    }
+                  ]
+                  endPoint Solid {
+                    translation 0.000000 0.030800 -0.025000
+                    children [
+                      Shape {
+                        appearance USE black
+                        geometry DEF UpperArm Mesh {
+                          url "../../meshes/stl/UpperArm.stl"
+                        }
+                      }
+                      HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis 0.000000 1.000000 0.000000
+                          anchor 0.000000 0.000000 -0.145000
+                          dampingConstant %{= b3msc1040_damping }%
+                          staticFriction %{= b3msc1040_staticFric }%
+                        }
+                        device [
+                          RotationalMotor {
+                            name "left_elbow_pitch_joint"
+                            maxVelocity %{= b3msc1040_maxVelo}%
+                            minPosition -2.35619449019
+                            maxPosition 2.35619449019
+                            maxTorque %{=b3msc1040_torque}%
+                          }
+                          PositionSensor {
+                            name "left_elbow_pitch_joint_sensor"
+                            resolution %{=positionresolution}%
+                          }
+                        ]
+                        endPoint Solid {
+                          translation 0.000000 0.000000 -0.145000
+                          children [
+                            Shape {
+                              appearance USE black
+                              geometry DEF ForeArm Mesh {
+                                url "../../meshes/stl/ForeArm.stl"
+                              }
+                            }
+                          ]
+                          name "left_fore_arm_link"
+                          boundingObject USE ForeArm
+                          physics Physics {
+                            density -1
+                            mass 0.137614
+                            centerOfMass [ 0.000000 0.011654 -0.083221 ]
+                            inertiaMatrix [
+                              3.977740e-04 3.917490e-04 5.695700e-05
+                              0.000000e+00 0.000000e+00 0.000000e+00
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                    name "left_upper_arm_link"
+                    boundingObject USE UpperArm
+                    physics Physics {
+                      density -1
+                      mass 0.433169
+                      centerOfMass [ 0.000415 0.005221 -0.047591 ]
+                      inertiaMatrix [
+                        1.462386e-03 1.573653e-03 2.500700e-04
+                        0.000000e+00 0.000000e+00 0.000000e+00
+                      ]
+                    }
+                  }
+                }
+              ]
+              name "left_shoulder_link"
+              boundingObject USE Shoulder
+              physics Physics {
+                density -1
+                mass 0.029974
+                centerOfMass [ 0.000000 0.010040 -0.005235 ]
+                inertiaMatrix [
+                  9.025000e-06 1.688100e-05 1.131600e-05
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 1.000000 0.000000
+              anchor -0.005000 -0.078500 0.148000
+              dampingConstant %{= b3msc1040_damping }%
+              staticFriction %{= b3msc1040_staticFric }%
+            }
+            device [
+              RotationalMotor {
+                name "right_shoulder_pitch_joint"
+                maxVelocity %{= b3msc1040_maxVelo}%
+                minPosition -2.35619449019
+                maxPosition 2.35619449019
+                maxTorque %{=b3msc1040_torque}%
+              }
+              PositionSensor {
+                name "right_shoulder_pitch_joint_sensor"
+                resolution %{=positionresolution}%
+              }
+            ]
+            endPoint Solid {
+              translation -0.005000 -0.078500 0.148000
+              children [
+                Pose {
+                  rotation -0.000000 0.000000 1.000000 3.141593
+                  children [
+                    Shape {
+                      appearance USE black
+                      geometry USE Shoulder
+                    }
+                  ]
+                }
+                HingeJoint {
+                  jointParameters HingeJointParameters {
+                    anchor 0.000000 -0.030800 -0.025000
+                    dampingConstant %{= b3msc1040_damping }%
+                    staticFriction %{= b3msc1040_staticFric }%
+                  }
+                  device [
+                    RotationalMotor {
+                      name "right_shoulder_roll_joint"
+                      maxVelocity %{= b3msc1040_maxVelo}%
+                      minPosition -3.14159265359
+                      maxTorque %{=b3msc1040_torque}%
+                    }
+                    PositionSensor {
+                      name "right_shoulder_roll_joint_sensor"
+                      resolution %{=positionresolution}%
+                    }
+                  ]
+                  endPoint Solid {
+                    translation 0.000000 -0.030800 -0.025000
+                    children [
+                      Shape {
+                        appearance USE black
+                        geometry DEF UpperArm_MIR Mesh {
+                          url "../../meshes/stl/UpperArm_MIR.stl"
+                        }
+                      }
+                      HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis 0.000000 1.000000 0.000000
+                          anchor 0.000000 0.000000 -0.145000
+                          dampingConstant %{= b3msc1040_damping }%
+                          staticFriction %{= b3msc1040_staticFric }%
+                        }
+                        device [
+                          RotationalMotor {
+                            name "right_elbow_pitch_joint"
+                            maxVelocity %{= b3msc1040_maxVelo}%
+                            minPosition -2.35619449019
+                            maxPosition 2.35619449019
+                            maxTorque %{=b3msc1040_torque}%
+                          }
+                          PositionSensor {
+                            name "right_elbow_pitch_joint_sensor"
+                            resolution %{=positionresolution}%
+                          }
+                        ]
+                        endPoint Solid {
+                          translation 0.000000 0.000000 -0.145000
+                          rotation -0.000000 0.000000 1.000000 3.141593
+                          children [
+                            Pose {
+                              children [
+                                Transform{
+                                  children[
+                                    Shape {
+                                      appearance USE black
+                                        geometry USE ForeArm
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                          name "right_fore_arm_link"
+                          boundingObject USE ForeArm
+                          physics Physics {
+                            density -1
+                            mass 0.137614
+                            centerOfMass [ 0.000000 -0.011654 -0.083221 ]
+                            inertiaMatrix [
+                              3.977740e-04 3.917490e-04 5.695700e-05
+                              0.000000e+00 0.000000e+00 0.000000e+00
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                    name "right_upper_arm_link"
+                    boundingObject USE UpperArm_MIR
+                    physics Physics {
+                      density -1
+                      mass 0.433169
+                      centerOfMass [ 0.000415 -0.005221 -0.047591 ]
+                      inertiaMatrix [
+                        1.462386e-03 1.573653e-03 2.500700e-04
+                        0.000000e+00 0.000000e+00 0.000000e+00
+                      ]
+                    }
+                  }
+                }
+              ]
+              name "right_shoulder_link"
+              boundingObject Transform {
+                rotation 0 0 1 3.14159
+                children [
+                  USE Shoulder
+                ]
+              }
+              physics Physics {
+                density -1
+                mass 0.029974
+                centerOfMass [ 0.000000 -0.010040 -0.005235 ]
+                inertiaMatrix [
+                  9.025000e-06 1.688100e-05 1.131600e-05
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 0.000000 1.000000
+              anchor 0.000000 0.044000 -0.015000
+              dampingConstant %{= b3msc1170_damping }%
+              staticFriction %{= b3msc1170_staticFric }%
+            }
+            device [
+              RotationalMotor {
+                name "left_waist_yaw_joint"
+                maxVelocity %{=b3msc1170_maxVelo}%
+                minPosition -2.35619449019
+                maxPosition 2.35619449019
+                maxTorque %{=b3msc1170_torque}%
+              }
+              PositionSensor {
+                name "left_waist_yaw_joint_sensor"
+                resolution %{=positionresolution}%
+              }
+            ]
+            endPoint Solid {
+              translation 0.000000 0.044000 -0.015000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry DEF Leg_joint_roll_yaw Mesh {
+                    url "../../meshes/stl/Leg_joint_roll_yaw.stl"
+                  }
+                }
+                HingeJoint {
+                  jointParameters HingeJointParameters {
+                    anchor 0.000000 0.000000 -0.047500
+                    dampingConstant %{= b3msc1170_damping }%
+                    staticFriction %{= b3msc1170_staticFric }%
+                  }
+                  device [
+                    RotationalMotor {
+                      name "left_waist_roll_joint"
+                      maxVelocity %{=b3msc1170_maxVelo}%
+                      minPosition -0.785398163397
+                      maxPosition 0.785398163397
+                      maxTorque %{=b3msc1170_torque}%
+                    }
+                    PositionSensor {
+                      name "left_waist_roll_joint_sensor"
+                      resolution %{=positionresolution}%
+                    }
+                  ]
+                  endPoint Solid {
+                    translation 0.000000 0.000000 -0.047500
+                    children [
+                      Shape {
+                        appearance USE black
+                        geometry DEF Leg_joint_roll_pitch Mesh {
+                          url "../../meshes/stl/Leg_joint_roll_pitch.stl"
+                        }
+                      }
+                      HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis 0.000000 1.000000 0.000000
+                        }
+                        endPoint Solid {
+                          children [
+                            Shape {
+                              appearance USE black
+                              geometry DEF FrontLink Mesh {
+                                url "../../meshes/stl/FrontLink.stl"
+                              }
+                            }
+                            HingeJoint {
+                              jointParameters HingeJointParameters {
+                                axis 0.000000 1.000000 0.000000
+                                anchor 0.000000 0.000000 -0.100000
+                                dampingConstant %{= b3msc1170_damping }%
+                                staticFriction %{= b3msc1170_staticFric }%
+                              }
+                              device [
+                                RotationalMotor {
+                                  name "left_upper_knee_pitch_joint"
+                                  maxVelocity %{=b3msc1170_maxVelo}%
+                                  minPosition -0.523598775598
+                                  maxPosition 1.57079632679
+                                  maxTorque %{=b3msc1170_torque}%
+                                }
+                                PositionSensor {
+                                  name "left_upper_knee_pitch_joint_sensor"
+                                  resolution %{=positionresolution}%
+                                }
+                              ]
+                              endPoint Solid {
+                                translation 0.000000 0.000000 -0.100000
+                                children [
+                                  Shape {
+                                    appearance USE black
+                                    geometry DEF Knee Mesh {
+                                      url "../../meshes/stl/Knee.stl"
+                                    }
+                                  }
+                                  HingeJoint {
+                                    jointParameters HingeJointParameters {
+                                      axis 0.000000 1.000000 0.000000
+                                      anchor 0.000000 0.000000 -0.057000
+                                      dampingConstant %{= b3msc1170_damping }%
+                                      staticFriction %{= b3msc1170_staticFric }%
+                                    }
+                                    device [
+                                      RotationalMotor {
+                                        name "left_knee_pitch_joint"
+                                        maxVelocity %{=b3msc1170_maxVelo}%
+                                        minPosition -0.523598775598
+                                        maxPosition 1.57079632679
+                                        maxTorque %{=b3msc1170_torque}%
+                                      }
+                                      PositionSensor {
+                                        name "left_knee_pitch_joint_sensor"
+                                        resolution %{=positionresolution}%
+                                      }
+                                    ]
+                                    endPoint Solid {
+                                      translation 0.000000 0.000000 -0.057000
+                                      children [
+                                        Shape {
+                                          appearance USE black
+                                          geometry USE FrontLink
+                                        }
+                                        HingeJoint {
+                                          jointParameters HingeJointParameters {
+                                            axis 0.000000 1.000000 0.000000
+                                            anchor 0.000000 0.000000 -0.100000
+                                          }
+                                          endPoint Solid {
+                                            translation 0.000000 0.000000 -0.100000
+                                            children [
+                                              Shape {
+                                                appearance USE black
+                                                geometry DEF Ankle_independent_pitch Mesh {
+                                                  url "../../meshes/stl/Ankle_independent_pitch.stl"
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis 0.000000 1.000000 0.000000
+                                                  dampingConstant %{= b3msc1170_damping }%
+                                                  staticFriction %{= b3msc1170_staticFric }%
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "left_ankle_pitch_joint"
+                                                    maxVelocity %{=b3msc1170_maxVelo}%
+                                                    minPosition -2.35619449019
+                                                    maxPosition 2.35619449019
+                                                    maxTorque %{=b3msc1170_torque}%
+                                                  }
+                                                  PositionSensor {
+                                                    name "left_ankle_pitch_joint_sensor"
+                                                    resolution %{=positionresolution}%
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  children [
+                                                    Shape {
+                                                      appearance USE black
+                                                      geometry DEF Ankle Mesh {
+                                                        url "../../meshes/stl/Ankle.stl"
+                                                      }
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        dampingConstant %{= b3msc1040_damping }%
+                                                        staticFriction %{= b3msc1040_staticFric }%
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "left_ankle_roll_joint"
+                                                          maxVelocity %{= b3msc1040_maxVelo}%
+                                                          minPosition -1.57079632679
+                                                          maxPosition 1.57079632679
+                                                          maxTorque %{=b3msc1040_torque}%
+                                                        }
+                                                        PositionSensor {
+                                                          name "left_ankle_roll_joint_sensor"
+                                                          resolution %{=positionresolution}%
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        children [
+                                                          Shape {
+                                                            appearance USE black
+                                                            geometry DEF Foot Mesh {
+                                                              url "../../meshes/stl/Foot.stl"
+                                                            }
+                                                          }
+                                                          TouchSensor {
+                                                            translation 0.070865 0.05925 -0.0535
+                                                            rotation 0 1 0 1.5708
+                                                            name "left_foot_touch_sensor_left_front"
+                                                            type "force"
+                                                            resolution  1
+                                                            physics Physics {
+                                                              density -1
+                                                              mass 0.001
+                                                            }
+                                                            boundingObject Box {
+                                                              size 0.0030  0.0045 0.0045
+                                                            }
+                                                          }
+                                                          TouchSensor {
+                                                            translation 0.070865 -0.02075 -0.0535
+                                                            rotation 0 1 0 1.5708
+                                                            name "left_foot_touch_sensor_right_front"
+                                                            type "force"
+                                                            resolution  1
+                                                            physics Physics {
+                                                              density -1
+                                                              mass 0.001
+                                                            }
+                                                            boundingObject Box {
+                                                              size 0.0030  0.0045 0.0045
+                                                            }
+                                                          }
+                                                          TouchSensor {
+                                                            translation -0.089355 0.05925 -0.0535
+                                                            rotation 0 1 0 1.5708
+                                                            name "left_foot_touch_sensor_left_rear"
+                                                            type "force"
+                                                            resolution  1
+                                                            physics Physics {
+                                                              density -1
+                                                              mass 0.001
+                                                            }
+                                                            boundingObject Box {
+                                                              size 0.0030  0.0045 0.0045
+                                                            }
+                                                          }
+                                                          TouchSensor {
+                                                            translation -0.089355 -0.02075 -0.0535
+                                                            rotation 0 1 0 1.5708
+                                                            name "left_foot_touch_sensor_right_rear"
+                                                            type "force"
+                                                            resolution  1
+                                                            physics Physics {
+                                                              density -1
+                                                              mass 0.001
+                                                            }
+                                                            boundingObject Box {
+                                                              size 0.0030  0.0045 0.0045
+                                                            }
+                                                          }
+                                                          Solid {
+                                                            name "left_foot_link"
+                                                          #   physics Physics {
+                                                          #     density -1
+                                                          #     mass 0.000000
+                                                          #   }
+                                                          }
+                                                        ]
+                                                        name "left_ankle_roll_link"
+                                                        boundingObject USE Foot
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.084354
+                                                          centerOfMass [ -0.009915 0.014839 -0.038901 ]
+                                                          inertiaMatrix [
+                                                            7.241100e-05 3.030460e-04 3.587940e-04
+                                                            0.000000e+00 0.000000e+00 0.000000e+00
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "left_ankle_pitch_link"
+                                                  boundingObject USE Ankle
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.170076
+                                                    centerOfMass [ -0.031024 -0.000563 0.005073 ]
+                                                    inertiaMatrix [
+                                                      4.979900e-05 2.131990e-04 2.236390e-04
+                                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "left_independent_pitch_link"
+                                            boundingObject USE Ankle_independent_pitch
+                                            physics Physics {
+                                              density -1
+                                              mass 0.033835
+                                              centerOfMass [ -0.014232 0.000000 0.008895 ]
+                                              inertiaMatrix [
+                                                3.059900e-05 1.141400e-05 4.071300e-05
+                                                0.000000e+00 0.000000e+00 0.000000e+00
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      ]
+                                      name "left_shin_pitch_link"
+                                      boundingObject USE FrontLink
+                                      physics Physics {
+                                        density -1
+                                        mass 0.048967
+                                        centerOfMass [ 0.011314 0.000000 -0.037777 ]
+                                        inertiaMatrix [
+                                          8.263200e-05 4.927300e-05 4.549400e-05
+                                          0.000000e+00 0.000000e+00 0.000000e+00
+                                        ]
+                                      }
+                                    }
+                                  }
+                                  HingeJoint {
+                                    jointParameters HingeJointParameters {
+                                      axis 0.000000 1.000000 0.000000
+                                      anchor -0.032000 0.000000 -0.037000
+                                    }
+                                    endPoint Solid {
+                                      translation -0.032000 0.000000 -0.037000
+                                      children [
+                                        Shape {
+                                          appearance USE black
+                                          geometry DEF BackLowerLink Mesh {
+                                            url "../../meshes/stl/BackLowerLink.stl"
+                                          }
+                                        }
+                                        HingeJoint {
+                                          jointParameters HingeJointParameters {
+                                            axis 0.000000 1.000000 0.000000 
+                                            anchor 0.0 0 -0.1000
+                                          }
+                                          endPoint SolidReference {
+                                            solidName "left_independent_pitch_link"
+                                          }
+                                        }
+                                      ]
+                                      name "left_shin_pitch_mimic_link"
+                                      boundingObject USE BackLowerLink
+                                      physics Physics {
+                                        density -1
+                                        mass 0.023000
+                                        centerOfMass [ -0.001672 0.000000 -0.048684 ]
+                                        inertiaMatrix [
+                                          3.230900e-05 1.503900e-05 1.833900e-05
+                                          0.000000e+00 0.000000e+00 0.000000e+00
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                                name "left_knee_pitch_link"
+                                boundingObject USE Knee
+                                physics Physics {
+                                  density -1
+                                  mass 0.191270
+                                  centerOfMass [ -0.012553 -0.000997 -0.023840 ]
+                                  inertiaMatrix [
+                                    1.647900e-04 1.519860e-04 9.834900e-05
+                                    0.000000e+00 0.000000e+00 0.000000e+00
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                          name "left_waist_pitch_link"
+                          boundingObject USE FrontLink
+                          physics Physics {
+                            density -1
+                            mass 0.048967
+                            centerOfMass [ 0.011314 0.000000 -0.062223 ]
+                            inertiaMatrix [
+                              8.263200e-05 4.927300e-05 4.549400e-05
+                              0.000000e+00 0.000000e+00 0.000000e+00
+                            ]
+                          }
+                        }
+                      }
+                      HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis 0.000000 1.000000 0.000000
+                          anchor -0.032000 0.000000 -0.020000
+                        }
+                        endPoint Solid {
+                          translation -0.032000 0.000000 -0.020000
+                          children [
+                            Shape {
+                              appearance USE black
+                              geometry DEF BackUpperLink Mesh {
+                                url "../../meshes/stl/BackUpperLink.stl"
+                              }
+                            }
+                            HingeJoint {
+                              jointParameters HingeJointParameters {
+                                axis 0.000000 1.000000 0.000000 
+                                anchor 0.0 0 -0.1000
+                              }
+                              endPoint SolidReference {
+                                solidName "left_knee_pitch_link"
+                              }
+                            }
+                          ]
+                          name "left_waist_pitch_mimic_link"
+                          boundingObject USE BackUpperLink
+                          physics Physics {
+                            density -1
+                            mass 0.023000
+                            centerOfMass [ -0.001672 0.000000 -0.043339 ]
+                            inertiaMatrix [
+                              3.448400e-05 1.717800e-05 1.830200e-05
+                              0.000000e+00 0.000000e+00 0.000000e+00
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                    name "left_waist_roll_link"
+                    boundingObject USE Leg_joint_roll_pitch
+                    physics Physics {
+                      density -1
+                      mass 0.129389
+                      centerOfMass [ -0.011068 -0.000004 -0.000154 ]
+                      inertiaMatrix [
+                        5.558000e-05 6.175200e-05 7.998900e-05
+                        0.000000e+00 0.000000e+00 0.000000e+00
+                      ]
+                    }
+                  }
+                }
+              ]
+              name "left_waist_yaw_link"
+              boundingObject USE Leg_joint_roll_yaw
+              physics Physics {
+                density -1
+                mass 0.034780
+                centerOfMass [ -0.008797 0.000000 -0.009724 ]
+                inertiaMatrix [
+                  8.114000e-06 2.303400e-05 1.928700e-05
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 0.000000 1.000000
+              anchor 0.000000 -0.044000 -0.015000
+              dampingConstant %{= b3msc1170_damping }%
+              staticFriction %{= b3msc1170_staticFric }%
+            }
+            device [
+              RotationalMotor {
+                name "right_waist_yaw_joint"
+                maxVelocity %{=b3msc1170_maxVelo}%
+                minPosition -2.35619449019
+                maxPosition 2.35619449019
+                maxTorque %{=b3msc1170_torque}%
+              }
+              PositionSensor {
+                name "right_waist_yaw_joint_sensor"
+                resolution %{=positionresolution}%
+              }
+            ]
+            endPoint Solid {
+              translation 0.000000 -0.044000 -0.015000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE Leg_joint_roll_yaw
+                }
+                HingeJoint {
+                  jointParameters HingeJointParameters {
+                    anchor 0.000000 0.000000 -0.047500
+                    dampingConstant %{= b3msc1170_damping }%
+                    staticFriction %{= b3msc1170_staticFric }%
+                  }
+                  device [
+                    RotationalMotor {
+                      name "right_waist_roll_joint"
+                      maxVelocity %{=b3msc1170_maxVelo}%
+                      minPosition -0.785398163397
+                      maxPosition 0.785398163397
+                      maxTorque %{=b3msc1170_torque}%
+                    }
+                    PositionSensor {
+                      name "right_waist_roll_joint_sensor"
+                      resolution %{=positionresolution}%
+                    }
+                  ]
+                  endPoint Solid {
+                    translation 0.000000 0.000000 -0.047500
+                    children [
+                      Shape {
+                        appearance USE black
+                        geometry USE Leg_joint_roll_pitch
+                      }
+                      HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis 0.000000 1.000000 0.000000
+                        }
+                        endPoint Solid {
+                          children [
+                            Shape {
+                              appearance USE black
+                              geometry USE FrontLink
+                            }
+                            HingeJoint {
+                              jointParameters HingeJointParameters {
+                                axis 0.000000 1.000000 0.000000
+                                anchor 0.000000 0.000000 -0.100000
+                                dampingConstant %{= b3msc1170_damping }%
+                                staticFriction %{= b3msc1170_staticFric }%
+                              }
+                              device [
+                                RotationalMotor {
+                                  name "right_upper_knee_pitch_joint"
+                                  maxVelocity %{=b3msc1170_maxVelo}%
+                                  minPosition -0.523598775598
+                                  maxPosition 1.57079632679
+                                  maxTorque %{=b3msc1170_torque}%
+                                }
+                                PositionSensor {
+                                  name "right_upper_knee_pitch_joint_sensor"
+                                  resolution %{=positionresolution}%
+                                }
+                              ]
+                              endPoint Solid {
+                                translation 0.000000 0.000000 -0.100000
+                                children [
+                                  Shape {
+                                    appearance USE black
+                                    geometry DEF Knee_MIR Mesh {
+                                      url "../../meshes/stl/Knee_MIR.stl"
+                                    }
+                                  }
+                                  HingeJoint {
+                                    jointParameters HingeJointParameters {
+                                      axis 0.000000 1.000000 0.000000
+                                      anchor 0.000000 0.000000 -0.057000
+                                      dampingConstant %{= b3msc1170_damping }%
+                                      staticFriction %{= b3msc1170_staticFric }%
+                                    }
+                                    device [
+                                      RotationalMotor {
+                                        name "right_knee_pitch_joint"
+                                        maxVelocity %{=b3msc1170_maxVelo}%
+                                        minPosition -0.523598775598
+                                        maxPosition 1.57079632679
+                                        maxTorque %{=b3msc1170_torque}%
+                                      }
+                                      PositionSensor {
+                                        name "right_knee_pitch_joint_sensor"
+                                        resolution %{=positionresolution}%
+                                      }
+                                    ]
+                                    endPoint Solid {
+                                      translation 0.000000 0.000000 -0.057000
+                                      children [
+                                        Shape {
+                                          appearance USE black
+                                          geometry USE FrontLink
+                                        }
+                                        HingeJoint {
+                                          jointParameters HingeJointParameters {
+                                            axis 0.000000 1.000000 0.000000
+                                            anchor 0.000000 0.000000 -0.100000
+                                          }
+                                          endPoint Solid {
+                                            translation 0.000000 0.000000 -0.100000
+                                            children [
+                                              Shape {
+                                                appearance USE black
+                                                geometry USE Ankle_independent_pitch
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis 0.000000 1.000000 0.000000
+                                                  dampingConstant %{= b3msc1170_damping }%
+                                                  staticFriction %{= b3msc1170_staticFric }%
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "right_ankle_pitch_joint"
+                                                    maxVelocity %{=b3msc1170_maxVelo}%
+                                                    minPosition -2.35619449019
+                                                    maxPosition 2.35619449019
+                                                    maxTorque %{=b3msc1170_torque}%
+                                                  }
+                                                  PositionSensor {
+                                                    name "right_ankle_pitch_joint_sensor"
+                                                    resolution %{=positionresolution}%
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  children [
+                                                    Shape {
+                                                      appearance USE black
+                                                      geometry DEF Ankle_MIR Mesh {
+                                                        url "../../meshes/stl/Ankle_MIR.stl"
+                                                      }
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        dampingConstant %{= b3msc1040_damping }%
+                                                        staticFriction %{= b3msc1040_staticFric }%
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "right_ankle_roll_joint"
+                                                          maxVelocity %{= b3msc1040_maxVelo}%
+                                                          minPosition -1.57079632679
+                                                          maxPosition 1.57079632679
+                                                          maxTorque %{=b3msc1040_torque}%
+                                                        }
+                                                        PositionSensor {
+                                                          name "right_ankle_roll_joint_sensor"
+                                                          resolution %{=positionresolution}%
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        children [
+                                                          Shape {
+                                                            appearance USE black
+                                                            geometry DEF Foot_MIR Mesh {
+                                                              url "../../meshes/stl/Foot_MIR.stl"
+                                                            }
+                                                          }
+                                                          TouchSensor {
+                                                            translation 0.070865 -0.05925 -0.0535
+                                                            rotation 0 1 0 1.5708
+                                                            name "right_foot_touch_sensor_left_front"
+                                                            type "force"
+                                                            resolution  1
+                                                            boundingObject Box {
+                                                              size 0.0030  0.0045 0.0045
+                                                            }
+                                                            physics Physics {
+                                                              density -1
+                                                              mass 0.001
+                                                            }
+                                                          }
+                                                          TouchSensor {
+                                                            translation 0.070865 0.02075 -0.0535
+                                                            rotation 0 1 0 1.5708
+                                                            name "right_foot_touch_sensor_right_front"
+                                                            type "force"
+                                                            resolution  1
+                                                            boundingObject Box {
+                                                              size 0.0030  0.0045 0.0045
+                                                            }
+                                                            physics Physics {
+                                                              density -1
+                                                              mass 0.001
+                                                            }
+                                                          }
+                                                          TouchSensor {
+                                                            translation -0.089355 -0.05925 -0.0535
+                                                            rotation 0 1 0 1.5708
+                                                            name "right_foot_touch_sensor_left_rear"
+                                                            type "force"
+                                                            resolution  1
+                                                            boundingObject Box {
+                                                              size 0.0030  0.0045 0.0045
+                                                            }
+                                                            physics Physics {
+                                                              density -1
+                                                              mass 0.001
+                                                            }
+                                                          }
+                                                          TouchSensor {
+                                                            translation -0.089355 0.02075 -0.0535
+                                                            rotation 0 1 0 1.5708
+                                                            name "right_foot_touch_sensor_right_rear"
+                                                            type "force"
+                                                            resolution  1
+                                                            boundingObject Box {
+                                                              size 0.0030  0.0045 0.0045
+                                                            }
+                                                            physics Physics {
+                                                              density -1
+                                                              mass 0.001
+                                                            }
+                                                          }
+                                                          Solid {
+                                                            name "right_foot_link"
+                                                            # physics Physics {
+                                                            #   density -1
+                                                            #   mass 0.000000
+                                                            # }
+                                                          }
+                                                        ]
+                                                        name "right_ankle_roll_link"
+                                                        boundingObject USE Foot_MIR
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.084354
+                                                          centerOfMass [ -0.009915 -0.014839 -0.038901 ]
+                                                          inertiaMatrix [
+                                                            7.241100e-05 3.030460e-04 3.587940e-04
+                                                            0.000000e+00 0.000000e+00 0.000000e+00
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "right_ankle_pitch_link"
+                                                  boundingObject USE Ankle_MIR
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.170076
+                                                    centerOfMass [ -0.031024 0.000563 0.005073 ]
+                                                    inertiaMatrix [
+                                                      4.979900e-05 2.131990e-04 2.236390e-04
+                                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "right_independent_pitch_link"
+                                            boundingObject USE Ankle_independent_pitch
+                                            physics Physics {
+                                              density -1
+                                              mass 0.033835
+                                              centerOfMass [ -0.014232 0.000000 0.008895 ]
+                                              inertiaMatrix [
+                                                3.059900e-05 1.141400e-05 4.071300e-05
+                                                0.000000e+00 0.000000e+00 0.000000e+00
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      ]
+                                      name "right_shin_pitch_link"
+                                      boundingObject USE FrontLink
+                                      physics Physics {
+                                        density -1
+                                        mass 0.048967
+                                        centerOfMass [ 0.011314 0.000000 -0.037777 ]
+                                        inertiaMatrix [
+                                          8.263200e-05 4.927300e-05 4.549400e-05
+                                          0.000000e+00 0.000000e+00 0.000000e+00
+                                        ]
+                                      }
+                                    }
+                                  }
+                                  HingeJoint {
+                                    jointParameters HingeJointParameters {
+                                      axis 0.000000 1.000000 0.000000
+                                      anchor -0.032000 0.000000 -0.037000
+                                    }
+                                    endPoint Solid {
+                                      translation -0.032000 0.000000 -0.037000
+                                      children [
+                                        Shape {
+                                          appearance USE black
+                                          geometry USE BackLowerLink
+                                        }
+                                        HingeJoint {
+                                          jointParameters HingeJointParameters {
+                                            axis 0.000000 1.000000 0.000000 
+                                            anchor 0.0 0 -0.1000
+                                          }
+                                          endPoint SolidReference {
+                                            solidName "right_independent_pitch_link"
+                                          }
+                                        }
+                                      ]
+                                      name "right_shin_pitch_mimic_link"
+                                      boundingObject USE BackLowerLink
+                                      physics Physics {
+                                        density -1
+                                        mass 0.023000
+                                        centerOfMass [ -0.001672 0.000000 -0.048684 ]
+                                        inertiaMatrix [
+                                          3.230900e-05 1.503900e-05 1.833900e-05
+                                          0.000000e+00 0.000000e+00 0.000000e+00
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                                name "right_knee_pitch_link"
+                                boundingObject USE Knee_MIR
+                                physics Physics {
+                                  density -1
+                                  mass 0.191270
+                                  centerOfMass [ -0.012553 0.000997 -0.023840 ]
+                                  inertiaMatrix [
+                                    1.647900e-04 1.519860e-04 9.834900e-05
+                                    0.000000e+00 0.000000e+00 0.000000e+00
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                          name "right_waist_pitch_link"
+                          boundingObject USE FrontLink
+                          physics Physics {
+                            density -1
+                            mass 0.048967
+                            centerOfMass [ 0.011314 0.000000 -0.062223 ]
+                            inertiaMatrix [
+                              8.263200e-05 4.927300e-05 4.549400e-05
+                              0.000000e+00 0.000000e+00 0.000000e+00
+                            ]
+                          }
+                        }
+                      }
+                      HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis 0.000000 1.000000 0.000000
+                          anchor -0.032000 0.000000 -0.020000
+                        }
+                        endPoint Solid {
+                          translation -0.032000 0.000000 -0.020000
+                          children [
+                            Shape {
+                              appearance USE black
+                              geometry USE BackUpperLink
+                            }
+                            HingeJoint {
+                              jointParameters HingeJointParameters {
+                                axis 0.000000 1.000000 0.000000 
+                                anchor 0.0 0 -0.1000
+                              }
+                              endPoint SolidReference {
+                                solidName "right_knee_pitch_link"
+                              }
+                            }
+                          ]
+                          name "right_waist_pitch_mimic_link"
+                          boundingObject USE BackUpperLink
+                          physics Physics {
+                            density -1
+                            mass 0.023000
+                            centerOfMass [ -0.001672 0.000000 -0.043339 ]
+                            inertiaMatrix [
+                              3.448400e-05 1.717800e-05 1.830200e-05
+                              0.000000e+00 0.000000e+00 0.000000e+00
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                    name "right_waist_roll_link"
+                    boundingObject USE Leg_joint_roll_pitch
+                    physics Physics {
+                      density -1
+                      mass 0.129389
+                      centerOfMass [ -0.011068 0.000004 -0.000154 ]
+                      inertiaMatrix [
+                        5.558000e-05 6.175200e-05 7.998900e-05
+                        0.000000e+00 0.000000e+00 0.000000e+00
+                      ]
+                    }
+                  }
+                }
+              ]
+              name "right_waist_yaw_link"
+              boundingObject USE Leg_joint_roll_yaw
+              physics Physics {
+                density -1
+                mass 0.034780
+                centerOfMass [ -0.008797 0.000000 -0.009724 ]
+                inertiaMatrix [
+                  8.114000e-06 2.303400e-05 1.928700e-05
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+          Solid {
+            translation -0.005000 0.016820 0.003000
+            children [
+              Accelerometer {
+                name "imu/data accelerometer"
+                lookupTable [-78.4     0 0,
+                78.4 65535 0 ]
+                resolution -1
+              }
+              Gyro {
+                name "imu/data gyro"
+                lookupTable [-17.453      0 0,
+                17.453  65535 0 ]
+                resolution -1
+              }
+              Compass {
+                name "imu/data compass"
+              }
+            ]
+            name "imu_link"
+          }
+        ]
+        name "body_link"
+        boundingObject USE Trunk
+        physics Physics {
+          density -1
+          mass 1.758639
+          centerOfMass [ -0.024750 0.000537 0.068556 ]
+          inertiaMatrix [
+            9.982335e-03 7.902445e-03 6.318690e-03
+            0.000000e+00 0.000000e+00 0.000000e+00
+          ]
+        }
+      }
+    ]
+    physics Physics {
+    }
+    name IS name
+  }
+}

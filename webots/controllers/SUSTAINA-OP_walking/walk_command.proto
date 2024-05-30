@@ -1,0 +1,18 @@
+//  Apache License
+//  Version 2.0, January 2004
+//  http://www.apache.org/licenses/
+//  Copyright 2024 Satoshi Inoue
+
+syntax = "proto3";
+
+message WalkCommand{
+    float target_x = 1;
+    float target_y = 2;
+    float target_theta = 3;
+}
+
+message CameraImageData{
+    uint32 height = 1;
+    uint32 width = 2;
+    bytes raw_data = 3;
+}
