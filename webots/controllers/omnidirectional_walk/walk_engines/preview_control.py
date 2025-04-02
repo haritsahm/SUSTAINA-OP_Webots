@@ -12,7 +12,7 @@
 """
 import numpy as np
 import scipy
-from typing import Tuple, List
+from typing import Tuple
 from omegaconf import DictConfig
 
 
