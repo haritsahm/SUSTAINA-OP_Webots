@@ -1,0 +1,4 @@
+scipy
+omegaconf
+numpy
+hydra-core
