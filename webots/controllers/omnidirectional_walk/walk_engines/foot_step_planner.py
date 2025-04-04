@@ -1,9 +1,8 @@
-import math
 import numpy as np
-from typing import Tuple, List, Union, Optional
+from typing import Tuple, List, Union
 from omegaconf import DictConfig
 import logging
-from enum import Enum, auto
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
