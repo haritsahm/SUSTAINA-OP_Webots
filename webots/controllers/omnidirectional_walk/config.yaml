@@ -1,0 +1,75 @@
+# Main configuration file for the omnidirectional walk controller
+defaults:
+  - robot_config
+
+# Walk Engine type
+walk_engine: open_zmp_walk
+
+# Controller parameters
+controller:
+  # Robot control frequency in Hz
+  control_frequency: 100
+  # Maximum simulation time in seconds (0 for infinite)
+  max_simulation_time: 0
+
+# Walking parameters
+walking:
+  # Step height in meters
+  step_height: 0.04
+  # Step duration in seconds
+  max_velocity: 0.2
+  # Maximum angular velocity in rad/s
+  max_angular_velocity: 0.5
+
+# State estimation parameters
+
+# ZMP Preview Controller parameters
+preview_control:
+  # Sampling time in seconds
+  dt: 0.01
+  # Preview horizon time in seconds
+  preview_t: 3.0
+  # CoM height in meters
+  com_height: 0.283
+  # Penalty weight on control input (higher values make control more conservative)
+  R: 1.0e-6
+  # Penalty weight on ZMP tracking error (higher values prioritize tracking)
+  Qe: 0.9
+  # Penalty weight on differential CoM position
+  Qdpos: 0.0
+  # Penalty weight on differential CoM velocity
+  Qdvel: 0.0
+  # Penalty weight on differential CoM acceleration
+  Qdaccel: 0.0
+
+# Foot Step Planner parameters
+foot_step_planner:
+  # Maximum stride parameters
+  max_stride_x: 0.05
+  max_stride_y: 0.03
+  max_stride_th: 0.2
+  # Number of steps to plan ahead
+  n_steps: 4
+  # Foot separation (half of hip width)
+  foot_separation: 0.044
+  # Step timing parameters
+  t_step: 0.25
+  dsp_ratio: 0.15
+  dt: 0.01
+
+state_estimation:
+  # Complementary filter alpha for IMU fusion
+  complementary_filter_alpha: 0.98
+  # Kalman filter process noise
+  process_noise: 0.01
+  # Kalman filter measurement noise
+  measurement_noise: 0.1
+
+# Logging parameters
+logging:
+  # Enable logging
+  enabled: true
+  # Log file path
+  log_file: "walk_log.csv"
+  # Log frequency in Hz
+  log_frequency: 10

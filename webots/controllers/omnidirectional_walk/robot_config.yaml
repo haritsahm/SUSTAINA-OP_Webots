@@ -1,0 +1,90 @@
+# Robot configuration file for SUSTAINA-OP
+
+# Device groups organized by type
+robot_config:
+  # Servo motors
+  - servo:
+      # Head joints
+      - name: head_yaw_joint
+        id: 19
+      # Left arm joints
+      - name: left_shoulder_pitch_joint
+        id: 2
+      - name: left_shoulder_roll_joint
+        id: 4
+      - name: left_elbow_pitch_joint
+        id: 6
+      - name: left_arm_end
+        id: 22
+
+      # Right arm joints
+      - name: right_shoulder_pitch_joint
+        id: 1
+      - name: right_shoulder_roll_joint
+        id: 3
+      - name: right_elbow_pitch_joint
+        id: 5
+      - name: right_arm_end_joint
+        id: 21
+
+      # Left leg joints
+      - name: left_waist_yaw_joint
+        id: 8
+      - name: left_waist_roll_joint
+        id: 10
+      - name: left_upper_knee_pitch_joint
+        id: 12
+      - name: left_knee_pitch_joint
+        id: 14
+      - name: left_ankle_pitch_joint
+        id: 16
+      - name: left_ankle_roll_joint
+        id: 18
+      - name: left_foot_link
+        id: 30
+      - name: left_foot_toe_link
+        id: 32
+      - name: left_foot_heel_link
+        id: 34
+
+      # Right leg joints
+      - name: right_waist_yaw_joint
+        id: 7
+      - name: right_waist_roll_joint
+        id: 9
+      - name: right_upper_knee_pitch_joint
+        id: 11
+      - name: right_knee_pitch_joint
+        id: 13
+      - name: right_ankle_pitch_joint
+        id: 15
+      - name: right_ankle_roll_joint
+        id: 17
+      - name: right_foot_link
+        id: 31
+      - name: right_foot_toe_link
+        id: 33
+      - name: right_foot_heel_link
+        id: 35
+
+  # Touch sensors
+  - touch_sensor:
+      # Left foot touch sensors
+      - name: left_foot_touch_sensor_left_front
+        id: -1
+      - name: left_foot_touch_sensor_right_front
+        id: -1
+      - name: left_foot_touch_sensor_left_rear
+        id: -1
+      - name: left_foot_touch_sensor_right_rear
+        id: -1
+
+      # Right foot touch sensors
+      - name: right_foot_touch_sensor_left_front
+        id: -1
+      - name: right_foot_touch_sensor_right_front
+        id: -1
+      - name: right_foot_touch_sensor_left_rear
+        id: -1
+      - name: right_foot_touch_sensor_right_rear
+        id: -1
