@@ -56,6 +56,8 @@ foot_step_planner:
   t_step: 0.25
   dsp_ratio: 0.15
   dt: 0.01
+  # Single support phase ratio (proportion of step time in single support)
+  ssp_phase: 0.2
 
 state_estimation:
   # Complementary filter alpha for IMU fusion

@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Tuple, List, Union
+from typing import Tuple, List, Union, Dict
 from omegaconf import DictConfig
 import logging
 from enum import Enum
@@ -58,6 +58,10 @@ class FootStepPlanner():
         self.t_step = planner_config.get('t_step', 0.25)  # Time for a single step (seconds)
         self.dsp_ratio = planner_config.get('dsp_ratio', 0.15)  # Double support phase ratio
         self.dt = planner_config.get('dt', 0.01)  # Sampling time (seconds)
+        
+        # Phase parameters
+        self.ssp_phase = planner_config.get('ssp_phase', 0.2)  # Single support phase ratio
+        self.dsp_phase = 1.0 - self.ssp_phase  # Double support phase ratio
         
         # Derived time parameters
         self.t_dsp = self.dsp_ratio * self.t_step  # Double support phase duration
@@ -591,7 +595,7 @@ class FootStepPlanner():
             zmp_t += self.dt
 
         return zmp_pos, timer_count
-        
+    
     def get_zmp_reference_for_preview_control(self) -> np.ndarray:
         """Extract the ZMP reference trajectory in a format suitable for the PreviewControl class.
         
@@ -631,7 +635,7 @@ class FootStepPlanner():
         This method generates a sequence of footsteps, torso positions, and ZMP trajectory
         based on the current state and velocity commands. It handles the alternating
         support leg pattern and ensures smooth transitions between steps.
-
+        
         Parameters
         ----------
         vel_cmd : Union[List[float], Tuple[float, float, float], np.ndarray]
@@ -644,7 +648,7 @@ class FootStepPlanner():
             Next support leg, either 'left' or 'right'
         sway : bool, optional
             Whether to include initial sway in the ZMP trajectory, by default True
-
+            
         Returns
         -------
         foot_step: List[Tuple]
@@ -822,3 +826,250 @@ class FootStepPlanner():
 
         return foot_step, torso_pos, zmp_pos, timer_count
 
+    def calculate_footsteps(self, vel_cmd: Union[List[float], Tuple[float, float, float], np.ndarray],
+                          current_swing: Union[List[float], Tuple[float, float, float], np.ndarray],
+                          current_support: Union[List[float], Tuple[float, float, float], np.ndarray],
+                          current_torso: Union[List[float], Tuple[float, float, float], np.ndarray],
+                          next_support_leg: SupportLeg) -> List[Dict]:
+        """
+        Calculate N consecutive steps from the given velocity commands based on current support foot.
+        
+        This method generates a sequence of footsteps, torso positions, and ZMP trajectory
+        based on the current state and velocity commands. It handles the alternating
+        support leg pattern and ensures smooth transitions between steps.
+        
+        Parameters
+        ----------
+        vel_cmd : Union[List[float], Tuple[float, float, float], np.ndarray]
+            Velocity command input as [x_vel, y_vel, angular_vel]
+        current_swing : Union[List[float], Tuple[float, float, float], np.ndarray]
+            Current swing foot position as [x, y, theta]
+        current_support : Union[List[float], Tuple[float, float, float], np.ndarray]
+            Current support foot position as [x, y, theta]
+        current_torso : Union[List[float], Tuple[float, float, float], np.ndarray]
+            Current torso position as [x, y, theta]
+        next_support_leg : SupportLeg
+            Next support leg, either SupportLeg.LEFT or SupportLeg.RIGHT
+            
+        Returns
+        -------
+        step_sequence: List[Dict]
+            List of dictionaries containing the following keys for each step:
+            - 'time': time of the step
+            - 'SF': support leg (LEFT or RIGHT)
+            - 'L': current left foot position as [x, y, theta]
+            - 'R': current right foot position as [x, y, theta]
+            - 'C': current torso position as [x, y, theta]
+            - 'next_L': next left foot position as [x, y, theta]
+            - 'next_R': next right foot position as [x, y, theta]
+            - 'next_C': next torso position as [x, y, theta]
+            
+        Raises
+        ------
+        ValueError
+            If next_support_leg is not SupportLeg.LEFT or SupportLeg.RIGHT
+        """
+        # Empty method body - will be implemented later
+        # For N consective steps, the outputs will be a list of {SF_i, L_i, C_i, R_i, L_{i+1}, R_{i+1}, L_{i+2}, R_{i+2}}
+        # SF is support leg between [SupportLeg.LEFT, SupportLeg.RIGHT]
+        # For display purpose it should log the first input data:
+        #   - If next_support_leg is SupportLeg.RIGHT, then SF_0 is LEFT, else RIGHT;
+        #   - if next_support_leg is RIGHT, then R_0 is the swing foot and L_0 is the support foot. Else, L_0 is the swing foot and R_0 is the support foot.
+        # For i=1 to N: compute L_i, R_i, C_i, L_{i+1}, R_{i+1}, C_{i+1} using calcTorsoFoot and alternate between left and right support legs
+        # SF_i is the next support leg
+        # if next_support_leg is RIGHT, then L_i is the swing foot and R_i is the support foot. Else, L_i is the support foot and R_i is the swing foot
+        # C_i is the current torso position
+        # C_{i+1} is the next torso position
+        # Validate inputs
+        if next_support_leg not in [SupportLeg.LEFT, SupportLeg.RIGHT]:
+            raise ValueError("next_support_leg must be SupportLeg.LEFT or SupportLeg.RIGHT for planning")
+            
+        # Apply velocity limits for safety
+        vel_cmd = self.limit_velocity(vel_cmd)
+        
+        # Initialize time and containers
+        time = 0.0
+        step_sequence = []
+        
+        # Initialize left and right foot positions based on current support and swing
+        left_foot = current_swing.copy() if next_support_leg == SupportLeg.RIGHT else current_support.copy()
+        right_foot = current_support.copy() if next_support_leg == SupportLeg.RIGHT else current_swing.copy()
+        
+        # Set initial swing leg flag for calcTorsoFoot
+        left_is_swing = 1 if next_support_leg == SupportLeg.RIGHT else 0
+        
+        # Initialize current positions
+        current_SF = next_support_leg  # Current support leg is the input next_support_leg
+        current_L = left_foot  # Current left foot position
+        current_R = right_foot  # Current right foot position
+        current_C = current_torso.copy()  # Current torso position
+        
+        for i in range(self.n_steps):
+            # Calculate next torso and swing foot positions
+            next_C, next_swing_pos = self.calcTorsoFoot(vel_cmd, current_C, left_is_swing)
+            
+            # Update left or right foot based on which is swinging
+            if left_is_swing:
+                next_L = next_swing_pos.copy()
+                next_R = current_R
+            else:
+                next_L = current_L
+                next_R = next_swing_pos.copy()
+            
+            # No ZMP computation in this method
+            
+            # Switch support leg for next iteration
+            if current_SF == SupportLeg.RIGHT:
+                next_SF = SupportLeg.LEFT
+                left_is_swing = 0  # Right will swing next
+            else:  # current_SF == SupportLeg.LEFT
+                next_SF = SupportLeg.RIGHT
+                left_is_swing = 1  # Left will swing next
+            
+            # Add this step to the sequence with both current and next positions
+            step_sequence.append({
+                'time': time,
+                'SF': current_SF,
+                'L': current_L,
+                'R': current_R,
+                'C': current_C,
+                'next_L': next_L,
+                'next_R': next_R,
+                'next_C': next_C
+            })
+            
+            # Update current positions for next iteration
+            current_L = next_L
+            current_R = next_R
+            current_C = next_C
+            current_SF = next_SF
+            
+            # Advance time
+            time += self.t_step
+
+        # # Add a final double support phase
+        # step_sequence.append({
+        #     'time': time,
+        #     'SF': SupportLeg.BOTH,
+        #     'L': current_L,
+        #     'R': current_R,
+        #     'C': current_C,
+        #     'next_L': current_L,  # Same as current for final step
+        #     'next_R': current_R,  # Same as current for final step
+        #     'next_C': current_C   # Same as current for final step
+        # })
+        
+        return step_sequence
+
+    def calculate_piecewise_zmp(self, phi: float, initial_support_foot: np.ndarray, 
+                               initial_torso: np.ndarray, target_torso: np.ndarray) -> np.ndarray:
+        """
+        Calculate ZMP position based on phase (phi) and essential foot/torso positions.
+        
+        This method computes a ZMP position for a given phase in the step cycle using
+        the simplified phase-based approach. The method directly calculates ZMP positions
+        based on the single support phase (ssp_phase) and double support phase (dsp_phase)
+        configuration parameters.
+        
+        Parameters
+        ----------
+        phi : float
+            Normalized time/phase within the step cycle (0 to 1)
+        initial_support_foot : np.ndarray
+            Initial position of the support foot as [x, y, theta] or [x, y]
+        initial_torso : np.ndarray
+            Initial position of the torso as [x, y, theta] or [x, y]
+        target_torso : np.ndarray
+            Target position of the torso as [x, y, theta] or [x, y]
+            
+        Returns
+        -------
+        np.ndarray
+            ZMP position as [x, y]
+        """
+
+        # Determine ZMP position based on phase
+        if phi >= 0 and phi < self.ssp_phase:
+            factor = phi / self.ssp_phase
+            return initial_torso[:2] * (1 - factor) + initial_support_foot[:2] * factor
+        elif phi >= self.ssp_phase and phi < self.dsp_phase:
+            return initial_support_foot[:2]
+        elif phi >= self.dsp_phase and phi < 1:  # Changed to include phi=1.0
+            factor = (1 - phi) / (1 - self.dsp_phase)
+            return target_torso[:2] * (1 - factor) + initial_support_foot[:2] * factor
+        elif phi >= 1:
+            return target_torso[:2]
+        else:
+            raise ValueError("Invalid phase value")
+
+    def generate_complete_zmp_trajectory(self, foot_step_sequence: list) -> list:
+        """
+        Generate a complete ZMP trajectory for an entire footstep sequence.
+        
+        This method processes each step in the footstep sequence and calculates the ZMP
+        trajectory using the simplified calculate_piecewise_zmp method. For each step,
+        it samples the ZMP positions at intervals of self.dt from t=0 to t=self.t_step.
+        
+        The method returns a list of trajectory segments, where each segment contains
+        the time array and corresponding ZMP positions for a single step. This format
+        allows for easier integration with the preview control system and visualization.
+        
+        Parameters
+        ----------
+        foot_step_sequence : list[dict]
+            List of footstep data dictionaries from calculate_footsteps, each containing:
+            - 'SF': SupportLeg enum indicating the support foot (LEFT, RIGHT)
+            - 'L': Left foot position as [x, y, theta]
+            - 'R': Right foot position as [x, y, theta]
+            - 'C': Current torso position as [x, y, theta]
+            - 'next_C': Next torso position as [x, y, theta]
+            
+        Returns
+        -------
+        list[list]
+            List of trajectory segments, where each segment is a list containing:
+            - Time array of shape (n_samples,)
+            - ZMP positions array of shape (n_samples, 2) for x,y coordinates
+        """
+        complete_zmp_trajectory = []
+
+        # Calculate the number of samples per step
+        num_samples = int(self.t_step / self.dt) + 1
+
+        # Process step sequences
+        for step_data in foot_step_sequence:
+
+            # Determine support foot based on support leg
+            support_leg = step_data['SF']
+
+            # Extract positions
+            if support_leg == SupportLeg.LEFT:
+                support_foot = step_data['L']
+            elif support_leg == SupportLeg.RIGHT:
+                support_foot = step_data['R']
+
+            current_torso = step_data['C']
+            next_torso = step_data['next_C']
+
+            zmp_pos = []
+            zmp_t = []
+            # Generate ZMP trajectory for this step by sampling at different phases
+            for j in range(num_samples):
+                t = j * self.dt  # Current time within step
+                phi = t / self.t_step  # Normalized time (walk phase)
+
+                # Calculate ZMP position at this phase
+                zmp_xy = self.calculate_piecewise_zmp(
+                    phi,
+                    support_foot,
+                    current_torso,
+                    next_torso
+                )
+                zmp_t.append(t)
+                zmp_pos.append(zmp_xy)
+
+            zmp_pos = np.array(zmp_pos).reshape(-1, 2)
+            zmp_t = np.array(zmp_t)
+            complete_zmp_trajectory.append([zmp_t, zmp_pos])
+
+        return complete_zmp_trajectory
