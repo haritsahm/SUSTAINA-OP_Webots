@@ -967,9 +967,21 @@ class FootStepPlanner():
         Calculate ZMP position based on phase (phi) and essential foot/torso positions.
         
         This method computes a ZMP position for a given phase in the step cycle using
-        the simplified phase-based approach. The method directly calculates ZMP positions
-        based on the single support phase (ssp_phase) and double support phase (dsp_phase)
-        configuration parameters.
+        the simplified phase-based approach. The ZMP trajectory is defined piecewise:
+        
+        For 0 ≤ φ < ssp_phase (Initial single support to double support transition):
+            p(φ) = initial_torso·(1 - factor) + initial_support_foot·factor
+            where factor = φ/ssp_phase
+        
+        For ssp_phase ≤ φ < dsp_phase (Double support phase):
+            p(φ) = initial_support_foot
+        
+        For dsp_phase ≤ φ < 1 (Double support to final single support transition):
+            p(φ) = target_torso·(1 - factor) + initial_support_foot·factor
+            where factor = (1 - φ)/(1 - dsp_phase)
+        
+        For φ ≥ 1 (Beyond step cycle):
+            p(φ) = target_torso
         
         Parameters
         ----------
@@ -1002,6 +1014,152 @@ class FootStepPlanner():
         else:
             raise ValueError("Invalid phase value")
 
+    def compute_boundary_com_constraints(self, initial_support_foot: np.ndarray, 
+                             initial_torso: np.ndarray, 
+                             target_torso: np.ndarray,
+                             zmp_pose_p0: np.ndarray,
+                             zmp_pose_p1: np.ndarray) -> tuple:
+        """
+        Solve CoM boundary constraints.
+        
+        Parameters
+        ----------
+        initial_support_foot : np.ndarray
+            Support foot position [x, y, theta] or [x, y]
+        initial_torso : np.ndarray
+            Initial torso position [x, y, theta] or [x, y]
+        target_torso : np.ndarray
+            Target torso position [x, y, theta] or [x, y]
+            
+        Returns
+        -------
+        tuple
+            (aP, aN) coefficients for the homogeneous solution
+        """
+        # Constants
+        gravity = 9.81  # m/s^2
+        com_height = 0.283  # CoM height in meters
+        
+        # Extract 2D positions
+        support_foot = np.array(initial_support_foot[:2])
+        initial_com = np.array(initial_torso[:2])
+        target_com = np.array(target_torso[:2])
+        
+        # Time constants
+        t_zmp = np.sqrt(com_height / gravity)
+        phi_zmp = t_zmp / self.t_step
+        alpha = 1.0 / phi_zmp
+        
+        # Use the provided ZMP positions at boundaries
+        zmp_0 = zmp_pose_p0  # ZMP at φ=0
+        zmp_1 = zmp_pose_p1  # ZMP at φ=1
+        
+        # Transition vectors for boundary conditions
+        M_i = (support_foot - initial_com) / self.ssp_phase
+        N_i = -(support_foot - target_com) / (1 - self.dsp_phase)
+        
+        # Calculate transition terms at boundaries
+        phi_0 = 0
+        phi_1 = 1
+        
+        # For phi_0 = 0 (initial phase)
+        phase_diff_0 = phi_0 - self.ssp_phase  # Will be negative
+        term_0_factor = phase_diff_0 / phi_zmp - np.sinh(phase_diff_0 / phi_zmp)
+        trans_term_0 = M_i * t_zmp * term_0_factor
+        
+        # For phi_1 = 1 (final phase)
+        phase_diff_1 = phi_1 - self.dsp_phase  # Will be positive
+        term_1_factor = phase_diff_1 / phi_zmp - np.sinh(phase_diff_1 / phi_zmp)
+        trans_term_1 = N_i * t_zmp * term_1_factor
+        
+        # Calculate modified boundary values as per the equations
+        x_0_tilde = initial_com - zmp_0 - trans_term_0
+        x_1_tilde = target_com - zmp_1 - trans_term_1
+        
+        # Exponential terms
+        exp_alpha = np.exp(alpha)
+        exp_neg_alpha = np.exp(-alpha)
+        
+        # Calculate the denominator for both equations
+        denom = exp_alpha - exp_neg_alpha
+        
+        # Solve for aP and aN using the equations from the docstring
+        aP = (x_1_tilde - x_0_tilde * exp_neg_alpha) / denom
+        aN = (x_0_tilde * exp_alpha - x_1_tilde) / denom
+        
+        return aP, aN
+
+    def calculate_analytical_com(self, phi: float, zmp_pos: np.ndarray, 
+                                M_transition: np.ndarray, N_transition: np.ndarray,
+                                aP: np.ndarray, aN: np.ndarray) -> np.ndarray:
+        """
+        Calculate the analytical Center of Mass (CoM) position at a given phase.
+        
+        This method computes the CoM position using the Linear Inverted Pendulum Model (LIPM)
+        with the ZMP equation solution. It handles different phases of the walking cycle:
+        - Initial single support phase (0 ≤ φ < ssp_phase)
+        - Double support phase (ssp_phase ≤ φ < dsp_phase)
+        - Final single support phase (dsp_phase ≤ φ < 1)
+        - Beyond the step (φ ≥ 1)
+        
+        Parameters
+        ----------
+        phi : float
+            Current phase in the step cycle (0 ≤ φ ≤ 1)
+        zmp_pos : np.ndarray
+            Zero Moment Point position as [x, y]
+        M_transition : np.ndarray
+            Initial transition vector for the step
+        N_transition : np.ndarray
+            Final transition vector for the step
+        aP : np.ndarray
+            First coefficient of the homogeneous solution
+        aN : np.ndarray
+            Second coefficient of the homogeneous solution
+            
+        Returns
+        -------
+        np.ndarray
+            Calculated CoM position as [x, y]
+        """
+        # Constants
+        gravity = 9.81  # m/s^2
+        com_height = 0.283  # CoM height in meters
+
+        # Time constants
+        t_zmp = np.sqrt(com_height / gravity)
+        phi_zmp = t_zmp / self.t_step
+        
+        # Exponential terms (common in all phases)
+        exp_p = np.exp(phi / phi_zmp)
+        exp_n = np.exp(-phi / phi_zmp)
+        homogeneous_term = aP * exp_p + aN * exp_n
+
+        # Calculate CoM based on the current phase
+        if phi >= 0 and phi < self.ssp_phase:
+            # Initial single support phase
+            phase_diff = phi - self.ssp_phase
+            transition_term = M_transition * t_zmp * (
+                phase_diff / phi_zmp - np.sinh(phase_diff / phi_zmp)
+            )
+            return zmp_pos + homogeneous_term + transition_term
+            
+        elif phi >= self.ssp_phase and phi < self.dsp_phase:
+            # Double support phase (no transition terms)
+            return zmp_pos + homogeneous_term
+            
+        elif phi >= self.dsp_phase and phi < 1:
+            # Final single support phase
+            phase_diff = phi - self.dsp_phase
+            transition_term = N_transition * t_zmp * (
+                phase_diff / phi_zmp - np.sinh(phase_diff / phi_zmp)
+            )
+            return zmp_pos + homogeneous_term + transition_term
+            
+        else:  # phi >= 1
+            # Beyond the step, return ZMP position
+            return zmp_pos
+            
     def generate_complete_zmp_trajectory(self, foot_step_sequence: list) -> list:
         """
         Generate a complete ZMP trajectory for an entire footstep sequence.
@@ -1073,3 +1231,103 @@ class FootStepPlanner():
             complete_zmp_trajectory.append([zmp_t, zmp_pos])
 
         return complete_zmp_trajectory
+
+    def generate_complete_com_trajectory(self, foot_step_sequence: list) -> list:
+        """
+        Generate a complete Center of Mass (CoM) trajectory for an entire footstep sequence.
+        
+        This method processes each step in the footstep sequence and calculates the CoM
+        trajectory using the analytical solution from the Linear Inverted Pendulum Model (LIPM).
+        For each step, it samples the CoM positions at intervals of self.dt from t=0 to t=self.t_step.
+        
+        The method returns a list of trajectory segments, where each segment contains
+        the time array and corresponding CoM positions for a single step. This format
+        allows for easier integration with the preview control system and visualization.
+        
+        Parameters
+        ----------
+        foot_step_sequence : list[dict]
+            List of footstep data dictionaries from calculate_footsteps, each containing:
+            - 'SF': SupportLeg enum indicating the support foot (LEFT, RIGHT)
+            - 'L': Left foot position as [x, y, theta]
+            - 'R': Right foot position as [x, y, theta]
+            - 'C': Current torso position as [x, y, theta]
+            - 'next_C': Next torso position as [x, y, theta]
+            
+        Returns
+        -------
+        list[list]
+            List of trajectory segments, where each segment is a list containing:
+            - Time array of shape (n_samples,)
+            - CoM positions array of shape (n_samples, 2) for x,y coordinates
+        """
+        complete_com_trajectory = []
+
+        # Calculate the number of samples per step
+        num_samples = int(self.t_step / self.dt) + 1
+
+        # Process step sequences
+        for step_data in foot_step_sequence:
+            # Determine support foot based on support leg
+            support_leg = step_data['SF']
+
+            # Extract positions
+            if support_leg == SupportLeg.LEFT:
+                support_foot = step_data['L']
+            elif support_leg == SupportLeg.RIGHT:
+                support_foot = step_data['R']
+            else:
+                raise ValueError(f"Unknown support leg type: {support_leg}")
+
+            current_torso = step_data['C']
+            next_torso = step_data['next_C']
+
+            # Calculate boundary constraints once per step
+            zmp_pose_p0 = self.calculate_piecewise_zmp(0, support_foot, current_torso, next_torso)
+            zmp_pose_p1 = self.calculate_piecewise_zmp(1, support_foot, current_torso, next_torso)
+            aP, aN = self.compute_boundary_com_constraints(
+                support_foot, current_torso, next_torso,
+                zmp_pose_p0, zmp_pose_p1
+            )
+            print(f"Got boundary constraints: aP={aP}, aN={aN}")
+            
+            # Calculate transition vectors once per step
+            M_transition = (support_foot[:2] - current_torso[:2]) / self.ssp_phase
+            N_transition = -(support_foot[:2] - next_torso[:2]) / (1 - self.dsp_phase)
+
+            # Calculate CoM trajectory for this step
+            com_pos = []
+            com_t = []
+            
+            for j in range(num_samples):
+                t = j * self.dt  # Current time within step
+                phi = t / self.t_step  # Normalized time (walk phase)
+                # Calculate ZMP position at this phase
+                zmp_pose = self.calculate_piecewise_zmp(
+                    phi=phi,
+                    initial_support_foot=support_foot,
+                    initial_torso=current_torso,
+                    target_torso=next_torso
+                )
+                
+                # Calculate CoM position at this phase
+                com_xy = self.calculate_analytical_com(
+                    phi=phi,
+                    zmp_pos=zmp_pose,
+                    M_transition=M_transition,
+                    N_transition=N_transition,
+                    aP=aP,
+                    aN=aN
+                )
+                
+                com_t.append(t)
+                com_pos.append(com_xy)
+
+            # Convert to numpy arrays for easier manipulation
+            com_pos = np.array(com_pos).reshape(-1, 2)
+            com_t = np.array(com_t)
+            
+            # Add this step's trajectory to the complete trajectory
+            complete_com_trajectory.append([com_t, com_pos])
+
+        return complete_com_trajectory
