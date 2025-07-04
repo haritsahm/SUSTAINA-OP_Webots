@@ -41,9 +41,14 @@ class OpenZMPWalk:
     """
     
     def __init__(self, config: DictConfig):
-        """
-        Initialize the OpenZMPWalk engine.
-        
+        """Initialize the OpenZMPWalk engine.
+
+        This class manages walking motion generation using preview control and
+        foot step planning. It maintains three types of frame data:
+        1. Foot step planner frames (FSP): Used for step planning, stores (x, y, theta)
+        2. Robot state frames: Current robot state as 7D vectors (x, y, z, qw, qx, qy, qz)
+        3. Trajectory frames: Generated motion as 7D vectors (x, y, z, qw, qx, qy, qz)
+
         Parameters
         ----------
         config : DictConfig
@@ -51,258 +56,178 @@ class OpenZMPWalk:
             - walk: Walking parameters (step frequency, height, etc.)
             - preview_control: Preview controller parameters
             - foot_step_planner: Footstep planner parameters
+
+        Notes
+        -----
+        All frames are expressed in the global coordinate system (fixed at origin).
+        The global frame is right-handed with:
+        - X-axis: Forward direction
+        - Y-axis: Left direction
+        - Z-axis: Up direction
         """
         self.config = config
         
-        # Initialize the preview controller and footstep planner
+        # Initialize controllers
         self.pc = PreviewControl(config)
         self.fsp = FootStepPlanner(config)
         
-        # Walking parameters
-        self.step_height = 0.0     # meters
-        self.foot_separation = 0.0 # meters
-        self.com_height = 0.0      # meters
+        # Walking parameters from config
+        self.step_height = config.walking.step_height         # meters
+        self.foot_separation = config.body.foot_separation # meters
+        self.com_height = config.body.com_height          # meters
+        self.foot_offset = np.zeros(3, dtype=np.float32)     # meters, offset from ankle to foot sole
         
-        # Walking command
-        self.cmd_vel = np.zeros((3, 1), dtype=np.float32)  # [x_speed, y_speed, a_speed]
+        # Walking command (in global frame)
+        self.cmd_vel = np.zeros(3, dtype=np.float32)  # [vx, vy, omega] - m/s, m/s, rad/s
         
         # State variables
-        self.t_sim = 0.0     # Simulation time within a step
-        self.dt_sim = 0.01   # Simulation time step
-        self.left_is_swing = False   # True if left foot is swinging (right is support)
-        self.first_step = True       # Flag for the first step
-        self.steps_count = 1         # Counter for steps taken
+        self.t_sim = 0.0     # Current time within step cycle [0, t_step]
+        self.dt_sim = config.preview_control.dt   # Simulation time dt (s)
+        self.left_is_swing = True  # True if left foot is swing foot
+        self.next_support_leg = SupportLeg.RIGHT if self.left_is_swing else SupportLeg.LEFT
+        self.first_step = True      # True during initial step
+        self.steps_count = 1        # Number of steps taken
+        self.preview_steps = config.walking.preview_steps
 
-        # Global reference frame (fixed at origin)
-        # Identity homogeneous transformation matrix (4x4)
-        self.global_frame = np.eye(4, dtype=np.float32)  # Fixed reference frame at origin
-        
-        # Frame containers with respect to global frame
-        # Each container has current and target frames
-        # Each frame is a 4x4 homogeneous transformation matrix containing both rotation and translation
-        # [ R(3x3) t(3x1) ]
-        # [   0      1    ]
-        # where R is the rotation matrix and t is the translation vector
-        self.torso = {
-            'current': np.eye(4, dtype=np.float32),  # Current torso frame w.r.t global frame
-            'target': np.eye(4, dtype=np.float32)    # Target torso frame w.r.t global frame
-        }
-        
-        self.support_foot = {
-            'current': np.eye(4, dtype=np.float32),  # Current support foot frame w.r.t global frame
-            'target': np.eye(4, dtype=np.float32)    # Target support foot frame w.r.t global frame
-        }
-        
-        self.swing_foot = {
-            'current': np.eye(4, dtype=np.float32),  # Current swing foot frame w.r.t global frame
-            'target': np.eye(4, dtype=np.float32)    # Target swing foot frame w.r.t global frame
-        }
-        
-        # Intermediate calculation containers
-        self.swing_foot_traj = np.eye(4, dtype=np.float32)  # x,y,theta,z
-        self.support_foot_traj = np.eye(4, dtype=np.float32)   # x,y,theta,z
-        self.torso_traj = np.eye(4, dtype=np.float32)       # x,y,z,theta
+        # Global frame (fixed at origin)
+        self.global_frame = np.eye(4, dtype=np.float32)  # Right-handed: X forward, Y left, Z up
 
-        # ZMP and COM state variables
-        self.zmp_horizon = np.zeros((0, 2), dtype=np.float32)  # ZMP reference buffer
-        self.zmp_2d = np.zeros((3,1), dtype=np.float32)  # Current ZMP position
+        # Frame containers for foot step planner (FSP)
+        # Each frame stores (x, y, theta) for planning in global frame
+        self.torso_fsp = {
+            'initial': np.zeros(3, dtype=np.float32),  # Current torso pose for planning
+            'target': np.zeros(3, dtype=np.float32)    # Next torso pose from planner
+        }
         
-        # Foot offset for fine-tuning foot positions
-        self.foot_offset = np.zeros((3,1), dtype=np.float32)
+        self.left_foot_fsp = {
+            'initial': np.zeros(3, dtype=np.float32),  # Current support foot pose
+            'target': np.zeros(3, dtype=np.float32)    # Next support foot pose
+        }
         
-        # Initialize parameters from config
-        self._load_parameters()
+        self.right_foot_fsp = {
+            'initial': np.zeros(3, dtype=np.float32),  # Current swing foot pose
+            'target': np.zeros(3, dtype=np.float32)    # Target swing foot landing pose
+        }
         
-        # Initialize frames with default values
-        # self.reset_frames()
+        # Robot state containers (from kinematics)
+        # Stored as 7D vectors (x, y, z, qw, qx, qy, qz) in global frame
+        self.torso_robot = np.zeros(7, dtype=np.float32)       # Current torso state
+        self.right_foot_robot = np.zeros(7, dtype=np.float32)  # Current right foot state
+        self.left_foot_robot = np.zeros(7, dtype=np.float32)   # Current left foot state
         
-    def reset_frames(self, robot_kd: KinematicsDynamics = None):
-        """
-        Initialize or reset the frames based on robot kinematics and dynamics.
+        # Generated trajectory containers
+        # Stored as 7D vectors (x, y, z, qw, qx, qy, qz) in global frame
+        self.swing_foot_traj = np.zeros(7, dtype=np.float32)   # Swing foot trajectory
+        self.support_foot_traj = np.zeros(7, dtype=np.float32) # Support foot trajectory
+        self.torso_traj = np.zeros(7, dtype=np.float32)        # Torso trajectory
+
+        # Preview control state variables
+        self.zmp_horizon = np.zeros((self.pc.preview_horizon, 2), dtype=np.float32)  # Future ZMP references
+        self.zmp_current = np.zeros(2, dtype=np.float32)                            # Current ZMP position [x, y]
         
-        This method initializes the torso, support foot, and swing foot frames
-        using homogeneous transformation matrices. It always sets left_is_swing to True
-        to ensure walking starts with left leg swinging first.
-        
-        This method is useful when the robot falls or needs to restart walking from its initial stance.
-        
+    def reset_frames(self, robot_kd: KinematicsDynamics = None) -> None:
+        """Reset all frames and states for walking initialization.
+
+        This method performs three main tasks:
+        1. Resets walking state variables (flags, counters, time)
+        2. Updates robot state containers from current kinematics
+        3. Initializes FSP frames and trajectories for first step
+
+        The initialization assumes:
+        - Right foot will swing first (left_is_swing = False)
+        - Left foot is initial support foot
+        - First step needs sway motion to shift CoM
+
         Parameters
         ----------
         robot_kd : KinematicsDynamics, optional
-            KinematicsDynamics instance for accessing robot state.
-            If None, frames are initialized with default values.
+            Robot kinematics/dynamics interface. If None, uses default poses.
+
+        Notes
+        -----
+        - All poses are in global coordinate system
+        - Robot state uses 7D vectors (x, y, z, qw, qx, qy, qz)
+        - FSP frames use (x, y, theta) for planning
+        - Preview control states initialized at current torso position
         """
-        # Always start with left leg swinging first
-        self.left_is_swing = False
-        self.first_step = True       # Flag for the first step
+        # Initialize walking state
+        self.left_is_swing = False  # Start with right leg swinging first
+        self.first_step = True      # Flag for the first step (adds sway to move torso)
 
         # Reset step counter and simulation time
         self.t_sim = 0
         self.steps_count = 1
 
-        # Initialize frames from robot kinematics
-        # Get torso position and orientation
-        initial_torso_pos = np.zeros((3,1), dtype=np.float32)
-        initial_torso_pos[2, 0] = self.com_height
+        # Update robot data containers with current robot state
+        self.torso_robot[:3] = robot_kd.get_position(joint_id=TORSO_ID)    # Set translation vector (3x1)
+        self.torso_robot[3:] = convert_rotation_to_quaternion(robot_kd.get_rotation(joint_id=TORSO_ID))  # Set rotation matrix (3x3)
 
-        logging.info("Initial torso position: %s", initial_torso_pos)
-        # Set initial torso position
-        robot_kd.set_position(joint_id=TORSO_ID, position=initial_torso_pos)
+        # Update robot data containers for feet
+        self.left_foot_robot[:3] = robot_kd.get_position(LEFT_FOOT_ID)
+        self.left_foot_robot[3:] = convert_rotation_to_quaternion(robot_kd.get_rotation(LEFT_FOOT_ID))
+        self.right_foot_robot[:3] = robot_kd.get_position(RIGHT_FOOT_ID)
+        self.right_foot_robot[3:] = convert_rotation_to_quaternion(robot_kd.get_rotation(RIGHT_FOOT_ID))
+        
+        # Initialize footstep planner frames from robot data
+        # Since left_is_swing is False, the left foot is the initial support foot
+        # This is technically the last foot that was swung, which will be set as the support foot
+        self.support_foot_fsp['initial'][:2] = self.left_foot_robot[:2]
+        self.support_foot_fsp['initial'][2] = convert_quaternion_to_rpy(self.left_foot_robot[3:])[2]
+        self.swing_foot_fsp['initial'][:2] = self.right_foot_robot[:2]
+        self.swing_foot_fsp['initial'][2] = convert_quaternion_to_rpy(self.right_foot_robot[3:])[2]
+        self.torso_fsp['initial'][:2] = self.torso_robot[:2]
+        self.torso_fsp['initial'][2] = convert_quaternion_to_rpy(self.torso_robot[3:])[2]
 
-        torso_pos = robot_kd.get_position(joint_id=TORSO_ID).reshape(3, 1)
-        torso_orient = robot_kd.get_rotation(joint_id=TORSO_ID).reshape(3, 3)
-        # Update torso homogeneous transformation matrix
-        self.torso['current'][:3, :3] = torso_orient  # Set rotation matrix (3x3)
-        self.torso['current'][:3, 3:4] = torso_pos      # Set translation vector (3x1)
-        
-        # Get left and right foot positions and orientations
-        left_foot_pos = robot_kd.get_position(LEFT_FOOT_ID).reshape(3, 1)
-        right_foot_pos = robot_kd.get_position(RIGHT_FOOT_ID).reshape(3, 1)
-        
-        left_foot_orient = robot_kd.get_rotation(LEFT_FOOT_ID)
-        right_foot_orient = robot_kd.get_rotation(RIGHT_FOOT_ID)
-        
-        # Create homogeneous transformation matrices for left and right feet
-        left_foot_transform = np.eye(4, dtype=np.float32)
-        left_foot_transform[:3, :3] = left_foot_orient
-        left_foot_transform[:3, 3:4] = left_foot_pos
-        
-        right_foot_transform = np.eye(4, dtype=np.float32)
-        right_foot_transform[:3, :3] = right_foot_orient
-        right_foot_transform[:3, 3:4] = right_foot_pos
-        
-        # Since left_is_swing is always True when resetting, right foot is always support
-        # NOTE: This is technically the last foot that was swung, hence it is the foot that will be set as the support foot
-        self.support_foot['current'] = left_foot_transform
-        self.swing_foot['current'] = right_foot_transform
+        # Set target positions to match initial positions (no movement initially)
+        self.torso_fsp['target'] = self.torso_fsp['initial'].copy()
+        self.support_foot_fsp['target'] = self.support_foot_fsp['initial'].copy()
+        self.swing_foot_fsp['target'] = self.swing_foot_fsp['initial'].copy()
 
-        # Set target positions to match current positions (no movement initially)
-        self.torso['target'] = self.torso['current'].copy()
-        self.support_foot['target'] = self.support_foot['current'].copy()
-        self.swing_foot['target'] = self.swing_foot['current'].copy()
-
-        # Initialize preview control state
-        self.state_x = self.pc.init_state_err(pos=float(self.torso['current'][0, 3]), e=0)
-        self.state_y = self.pc.init_state_err(pos=float(self.torso['current'][1, 3]), e=0)
+        # Initialize preview control state using the initial torso position
+        self.state_x = self.pc.init_state_err(pos=float(self.torso_fsp['initial'][0]), e=0)
+        self.state_y = self.pc.init_state_err(pos=float(self.torso_fsp['initial'][1]), e=0)
+        
+        # Initialize trajectory frames with initial positions
+        self.torso_traj = self.torso_fsp['initial'][:2].ravel().tolist() + convert_rpy_to_quaternion(0, 0, self.torso_fsp['initial'][2]).tolist()
+        self.support_foot_traj = self.support_foot_fsp['initial'][:2].ravel().tolist() + convert_rpy_to_quaternion(0, 0, self.support_foot_fsp['initial'][2]).tolist()
+        self.swing_foot_traj = self.swing_foot_fsp['initial'][:2].ravel().tolist() + convert_rpy_to_quaternion(0, 0, self.swing_foot_fsp['initial'][2]).tolist()
 
     def _get_current_robot_state(self, robot_kd: KinematicsDynamics, next_supp_leg: SupportLeg) -> None:
-        """
-        Get current robot state from kinematics and dynamics.
-        
-        Updates the current torso, support foot, and swing foot frames from the
-        KinematicsDynamics instance without resetting other parameters like
-        left_is_swing or step counters. This method extracts the position and
-        orientation of each frame and updates the homogeneous transformation matrices.
-        
+        """Update robot state containers with current kinematics data.
+
+        Retrieves current robot state from kinematics and updates the 7D state
+        vectors (position + quaternion) for torso and feet in global frame.
+
         Parameters
         ----------
         robot_kd : KinematicsDynamics
-            KinematicsDynamics instance for accessing robot state
+            Interface to robot kinematics providing position and rotation data
+        next_supp_leg : SupportLeg
+            Next support leg (LEFT or RIGHT) for state tracking
+
+        Notes
+        -----
+        - All positions and orientations are in global frame
+        - State vectors format: [x, y, z, qw, qx, qy, qz]
+        - Position from get_position(): [x, y, z]
+        - Rotation converted to quaternion from rotation matrix
         """
-        # Get torso position and orientation
-        torso_pos = robot_kd.get_position(TORSO_ID).reshape(3, 1)
-        torso_orient = robot_kd.get_rotation(TORSO_ID)
+        # Update torso state
+        self.torso_robot[:3] = robot_kd.get_position(TORSO_ID)
+        self.torso_robot[3:] = convert_rotation_to_quaternion(robot_kd.get_rotation(TORSO_ID))
         
-        # Update torso homogeneous transformation matrix
-        self.torso['current'][:3, :3] = torso_orient  # Set rotation matrix (3x3)
-        self.torso['current'][:3, 3:4] = torso_pos      # Set translation vector (3x1)
+        # Update feet states
+        self.left_foot_robot[:3] = robot_kd.get_position(LEFT_FOOT_ID)
+        self.left_foot_robot[3:] = convert_rotation_to_quaternion(robot_kd.get_rotation(LEFT_FOOT_ID))
         
-        # Get left and right foot positions and orientations
-        left_foot_pos = robot_kd.get_position(LEFT_FOOT_ID).reshape(3, 1)
-        right_foot_pos = robot_kd.get_position(RIGHT_FOOT_ID).reshape(3, 1)
+        self.right_foot_robot[:3] = robot_kd.get_position(RIGHT_FOOT_ID)
+        self.right_foot_robot[3:] = convert_rotation_to_quaternion(robot_kd.get_rotation(RIGHT_FOOT_ID))
         
-        left_foot_orient = robot_kd.get_rotation(LEFT_FOOT_ID)
-        right_foot_orient = robot_kd.get_rotation(RIGHT_FOOT_ID)
-        
-        # Create homogeneous transformation matrices for left and right feet
-        left_foot_transform = np.eye(4, dtype=np.float32)
-        left_foot_transform[:3, :3] = left_foot_orient
-        left_foot_transform[:3, 3:4] = left_foot_pos
-        
-        right_foot_transform = np.eye(4, dtype=np.float32)
-        right_foot_transform[:3, :3] = right_foot_orient
-        right_foot_transform[:3, 3:4] = right_foot_pos
-        
-        # Update support and swing foot based on current state
-        if not self.first_step:
-            if next_supp_leg == SupportLeg.RIGHT:
-                self.support_foot['current'] = right_foot_transform
-                self.swing_foot['current'] = left_foot_transform
-            else:
-                self.support_foot['current'] = left_foot_transform
-                self.swing_foot['current'] = right_foot_transform
-        else:
-            if next_supp_leg == SupportLeg.RIGHT:
-                self.support_foot['current'] = right_foot_transform
-                self.swing_foot['current'] = left_foot_transform
-            else:
-                self.support_foot['current'] = left_foot_transform
-                self.swing_foot['current'] = right_foot_transform
-        print(f"Current Torso: {self.torso['current']}")
-        print(f"Current Support foot: {self.support_foot['current']}")
-        print(f"Current Swing foot: {self.swing_foot['current']}")
-
-    def _load_parameters(self):
-        """
-        Load parameters from configuration and initialize foot positions
-        """
-        # Load walking parameters from config
-        if 'walking' in self.config:
-            walking_config = self.config.walking
-            self.step_height = walking_config.get('step_height', 0.04)  # Default step height
-
-            # Load foot offset if available
-            if 'foot_offset' in walking_config:
-                foot_offset = walking_config.foot_offset
-                self.foot_offset = np.array([
-                    [foot_offset.get('x', 0.0)], 
-                    [foot_offset.get('y', 0.0)], 
-                    [foot_offset.get('z', 0.0)]
-                ], dtype=np.float32)
-        else:
-            logger.warning("No ZMP walk configuration found, using default values")
-            self.step_height = 0.04
-            self.foot_offset = np.zeros((3,1), dtype=np.float32)
-
-        # Set the time step from the preview controller
-        self.dt_sim = self.pc.dt
-        self.foot_separation = self.fsp.y_sep  # Use the value from footstep planner
-        self.com_height = self.pc.com_height
-
-        # Initialize foot positions based on foot separation
-        # Left foot is positioned at y = foot_separation/2
-        # Right foot is positioned at y = -foot_separation/2
-        # Both feet start at x = 0, z = 0
-
-        # Set initial positions for left and right feet as column vectors
-        left_foot_init = np.array([[0.0], [self.foot_separation], [0.0]], dtype=np.float32)
-        right_foot_init = np.array([[0.0], [-self.foot_separation], [0.0]], dtype=np.float32)
-
-        # Set initial torso position (midpoint between feet)
-        torso_init = np.zeros((3,1), dtype=np.float32)
-
-        # Initialize frames with initial positions
-        self.torso['current'][:3, 3:4] = torso_init
-        self.torso['current'][:3, :3] = get_rotation_z(0.0)  # Initial yaw
-        self.torso['target'] = self.torso['current'].copy()
-
-        # Initialize support and swing foot positions based on which foot starts as support
-        if self.left_is_swing:
-            # Right foot is support, left foot is swing
-            self.support_foot['current'][:3, 3:4] = right_foot_init
-            self.support_foot['current'][:3, :3] = get_rotation_z(0.0)
-            self.swing_foot['current'][:3, 3:4] = left_foot_init
-            self.swing_foot['current'][:3, :3] = get_rotation_z(0.0)
-        else:
-            # Left foot is support, right foot is swing
-            self.support_foot['current'][:3, 3:4] = left_foot_init
-            self.support_foot['current'][:3, :3] = get_rotation_z(0.0)
-            self.swing_foot['current'][:3, 3:4] = right_foot_init
-            self.swing_foot['current'][:3, :3] = get_rotation_z(0.0)
-        
-        # Set target positions to match current positions (no movement initially)
-        self.support_foot['target'] = self.support_foot['current'].copy()
-        self.swing_foot['target'] = self.swing_foot['current'].copy()
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug("Current Robot State (global frame):")
+            logging.debug(f"Torso: pos={self.torso_robot[:3]}, quat={self.torso_robot[3:]}")
+            logging.debug(f"Left Foot: pos={self.left_foot_robot[:3]}, quat={self.left_foot_robot[3:]}")
+            logging.debug(f"Right Foot: pos={self.right_foot_robot[:3]}, quat={self.right_foot_robot[3:]}")
     
     def set_walking_command(self, x_speed: float, y_speed: float, a_speed: float):
         """
@@ -316,143 +241,175 @@ class OpenZMPWalk:
         # Set velocity command expected by the footstep planner
         self.cmd_vel = np.array([x_speed, y_speed, a_speed], dtype=np.float32).reshape((3, 1))
     
-    def swap_foot(self):
+    def swap_foot(self) -> None:
+        """Swap support and swing feet in the footstep planner frames.
+
+        Updates the FSP frame containers and swing state based on the next
+        support leg. The previous swing foot becomes the new support foot,
+        and vice versa.
+
+        Parameters
+        ----------
+        next_support_leg : SupportLeg
+            Specifies which leg (LEFT/RIGHT) will be the support leg
+            after the swap
+
+        Notes
+        -----
+        - Updates left_is_swing flag based on next_support_leg
+        - Copies target poses to initial poses for next step
+        - All FSP frames use (x, y, theta) format in global frame
+        - Order of operations is important to avoid frame corruption
         """
-        Switch the foot from left to right or vice versa
-        """
-        if not self.first_step:
-            # Swap the support and swing feet
-            temp = self.support_foot['current'].copy()
-            
-            if self.left_is_swing:
-                # Left was swing, now becomes support
-                self.left_is_swing = False
-                # Update current positions
-                self.support_foot['current'] = self.swing_foot['current'].copy()  # Left foot becomes support
-                self.swing_foot['current'] = temp  # Right foot becomes swing
-            else:
-                # Right was swing, now becomes support
-                self.left_is_swing = True
-                # Update current positions
-                self.support_foot['current'] = self.swing_foot['current'].copy()  # Right foot becomes support
-                self.swing_foot['current'] = temp  # Left foot becomes swing
-            
-            # Update torso position
-            self.torso['current'] = self.torso['target'].copy()
+        # Update swing state based on next support leg
+        self.left_is_swing = (self.next_support_leg == SupportLeg.RIGHT)
+
+        # Previous swing foot becomes new support foot
+        self.left_foot_fsp['initial'] = self.left_foot_fsp['target'].copy()
+        self.right_foot_fsp['initial'] = self.right_foot_fsp['target'].copy()
+        self.torso_fsp['initial'] = self.torso_fsp['target'].copy()
         
-        self.first_step = False
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug(f"Swapped feet - New state:")
+            logging.debug(f"  Support foot: {'Right' if self.left_is_swing else 'Left'}")
+            logging.debug(f"  Swing foot: {'Left' if self.left_is_swing else 'Right'}")
     
-    def calculate_com_trajectory(self, t_time: float, x_com_2d: List[float]) -> np.ndarray:
-        """
-        Calculate the COM trajectory based on the preview control output.
-        
-        This method computes the center of mass (COM) trajectory by interpolating
-        between the current and target torso positions and orientations. It uses
-        quaternion interpolation (SLERP) for smooth rotation transitions.
-        
+    def calculate_com_trajectory(self, t_time: float, x_com_2d: np.ndarray, initial_torso: np.ndarray, target_torso: np.ndarray, rotation_as_quaternion: bool = False) -> np.ndarray:
+        """Calculate the COM trajectory in global frame using preview control output.
+
+        This method generates a smooth center of mass (COM) trajectory by:
+        1. Using preview control output for x-y position
+        2. Maintaining constant COM height
+        3. Interpolating torso orientation using SLERP between initial and target poses
+
         Parameters
         ----------
         t_time : float
-            Current time within the step (seconds)
-        x_com_2d : List[float]
-            2D position of the COM [x, y] from the preview controller
-            
+            Current time within the step cycle [0, t_step] in seconds
+        x_com_2d : np.ndarray, shape (2,)
+            2D position [x, y] of the COM from preview controller in global frame
+
         Returns
         -------
-        np.ndarray
-            4x4 homogeneous transformation matrix for the COM
+        np.ndarray, shape (4, 4)
+            Homogeneous transformation matrix representing the COM pose in global frame:
+            - Translation: [x, y] from preview control, z from config
+            - Rotation: SLERP interpolation between initial and target torso orientations
+
+        Notes
+        -----
+        - All positions and orientations are in the global coordinate system
+        - Uses h-function from footstep planner for smooth interpolation
+        - Maintains constant COM height from preview controller config
         """
         norm_t_time = t_time / self.fsp.t_step
-        # NOTE: Using SLERP for smooth rotation interpolation between quaternions
-        current_torso_quat = convert_rotation_to_quaternion(self.torso['current'][:3, :3])
-        target_torso_quat = convert_rotation_to_quaternion(self.torso['target'][:3, :3])
+        initial_torso_quat = convert_rotation_to_quaternion(get_rotation_z(self.torso_fsp['initial'][2]))
+        target_torso_quat = convert_rotation_to_quaternion(get_rotation_z(self.torso_fsp['target'][2]))
         
         h_func = self.fsp.calcHfunc(t_time, norm_t_time)
-        # Linear interpolation of quaternions
-        torso_quat = h_func * current_torso_quat + (1 - h_func) * target_torso_quat
-        # Normalize the quaternion to ensure unit length
-        torso_quat = torso_quat / np.linalg.norm(torso_quat)
+        torso_quat = h_func * initial_torso_quat + (1 - h_func) * target_torso_quat
+        torso_quat = (torso_quat / np.linalg.norm(torso_quat)).ravel()
 
-        com_translation = np.array([x_com_2d[0], x_com_2d[1], self.pc.com_height]).reshape(3, 1)
-        com_rotation = convert_quaternion_to_rotation(torso_quat)
+        if rotation_as_quaternion:
+            return np.array([x_com_2d[0], x_com_2d[1], self.pc.com_height] + torso_quat.ravel().tolist())
         com_transforms = np.eye(4, dtype=np.float32)
-        com_transforms[:3, :3] = com_rotation
-        com_transforms[:3, 3:4] = com_translation
+        com_transforms[:3, :3] = convert_quaternion_to_rotation(torso_quat)
+        com_transforms[:3, 3] = [x_com_2d[0], x_com_2d[1], self.pc.com_height]
         return com_transforms
     
-    def calculate_swing_foot(self, t_time: float) -> np.ndarray:
-        """
-        Calculate the swing foot trajectory during a step.
-        
-        This method computes the swing foot trajectory by:
-        1. Interpolating horizontally between current and target positions
-        2. Generating a vertical trajectory with a bell-shaped curve for foot clearance
-        3. Combining these into a homogeneous transformation matrix
-        
-        The horizontal interpolation uses the H-function from the footstep planner,
-        while the vertical trajectory uses the V-function to create a smooth lifting motion.
-        
+    def calculate_swing_foot(self, t_time: float, swing_foot_initial: np.ndarray, swing_foot_target: np.ndarray, rotation_as_quaternion: bool = False) -> np.ndarray:
+        """Calculate the swing foot trajectory in global frame during a step.
+
+        This method generates a smooth swing foot trajectory by:
+        1. Interpolating position between initial and target poses using h-function
+        2. Interpolating orientation using quaternion SLERP
+        3. Adding vertical motion using v-function for foot clearance
+
         Parameters
         ----------
         t_time : float
-            Current time within the step (seconds)
-            
+            Current time within the step cycle [0, t_step] in seconds
+
         Returns
         -------
-        np.ndarray
-            4x4 homogeneous transformation matrix for the swing foot
+        np.ndarray, shape (4, 4)
+            Homogeneous transformation matrix for swing foot in global frame:
+            - Translation: [x, y] interpolated, z follows step height curve
+            - Rotation: SLERP between initial and target orientations
+
+        Notes
+        -----
+        - All poses are in global coordinate system
+        - Uses h-function for horizontal interpolation (position and orientation)
+        - Uses v-function for vertical trajectory (bell-shaped curve)
+        - Vertical motion: z = 0 -> step_height -> 0 during swing phase
+        - Includes foot_offset for static height adjustment
         """
         norm_t_time = t_time / self.fsp.t_step
         h_phase = self.fsp.calcHfunc(t_time, norm_t_time)
-        
-        if self.first_step:
-            norm_t_time = 0
-            h_phase = 0
-        
-        # Interpolate between current and target positions
-        swing_horizontal = h_phase * self.swing_foot['target'][:2, 3] + \
-            (1 - h_phase) * self.swing_foot['current'][:2, 3]
-        
-        # Vertical trajectory with bell-shaped curve w.r.t support foot
-        # Generate a bell-shaped curve for foot clearance during swing phase
-        v_func = self.fsp.calcVfunc(t_time, norm_t_time)
-        # Add step_height during swing phase (v_func is positive during swing)
-        swing_vertical = self.com_height + self.step_height * v_func + float(self.foot_offset[2])
+        v_phase = self.fsp.calcVfunc(t_time, norm_t_time)
 
+        initial_swing_quat = convert_rotation_to_quaternion(get_rotation_z(swing_foot_initial[2]))
+        target_swing_quat = convert_rotation_to_quaternion(get_rotation_z(swing_foot_target[2]))
+        swing_horizontal = h_phase * swing_foot_target[:2] + \
+            (1 - h_phase) * swing_foot_initial[:2]
+
+        swing_quat = h_phase * target_swing_quat + \
+            (1 - h_phase) * initial_swing_quat
+        swing_quat = (swing_quat / np.linalg.norm(swing_quat)).ravel()
+
+        swing_vertical = self.step_height * v_phase + float(self.foot_offset[2])
+
+        if rotation_as_quaternion:
+            return np.array([swing_horizontal[0], swing_horizontal[1], swing_vertical] + swing_quat.ravel().tolist())
         swing_foot_pose = np.eye(4, dtype=np.float32)
-        swing_foot_pose[:3, 3:4] = np.array([swing_horizontal[0], swing_horizontal[1], swing_vertical]).reshape(3,1)
-        swing_foot_pose[:3, :3] = self.swing_foot['target'][:3, :3]
+        swing_foot_pose[:3, :3] = convert_quaternion_to_rotation(swing_quat)
+        swing_foot_pose[:2, 3] = swing_horizontal.ravel()
+        swing_foot_pose[2, 3] = swing_vertical
         return swing_foot_pose
 
-    def calculate_support_foot(self, t_time: float) -> np.ndarray:
-        """
-        Calculate the support foot position at a given time step
-        Args:
-            t_time: Time step in seconds
-        Returns:
-            4x4 homogeneous transformation matrix for the support foot
+    def calculate_support_foot(self, t_time: float, support_foot_initial: np.ndarray, support_foot_target: np.ndarray, rotation_as_quaternion: bool = False) -> np.ndarray:
+        """Calculate the support foot pose in global frame during stance phase.
+
+        This method computes the support foot trajectory, which should remain
+        relatively stationary during the step. While horizontal interpolation
+        is calculated for consistency, the foot should maintain ground contact.
+
+        Parameters
+        ----------
+        t_time : float
+            Current time within the step cycle [0, t_step] in seconds
+
+        Returns
+        -------
+        np.ndarray, shape (4, 4)
+            Homogeneous transformation matrix for support foot in global frame:
+            - Translation: [x, y] interpolated, z fixed at foot_offset
+            - Rotation: Fixed at target orientation
+
+        Notes
+        -----
+        - All poses are in global coordinate system
+        - Uses h-function for horizontal interpolation (position only)
+        - Maintains constant height at foot_offset
+        - No vertical motion to ensure ground contact
+        - Orientation fixed to target to maintain stability
         """
         norm_t_time = t_time / self.fsp.t_step
         h_phase = self.fsp.calcHfunc(t_time, norm_t_time)
         
-        if self.first_step:
-            norm_t_time = 0
-            h_phase = 0
+        support_horizontal = h_phase * support_foot_target[:2] + \
+            (1 - h_phase) * support_foot_initial[:2]
         
-        # Interpolate between current and target positions
-        support_horizontal = h_phase * self.support_foot['target'][:2, 3] + \
-            (1 - h_phase) * self.support_foot['current'][:2, 3]
-        
-        # Vertical trajectory with bell-shaped curve w.r.t support foot
-        # Generate a bell-shaped curve for foot clearance during support phase
-        v_func = self.fsp.calcVfunc(t_time, norm_t_time)
-        # Add step_height during support phase (v_func is negative during support)
-        # support_vertical = self.step_height * v_func + float(self.foot_offset[2])
-        support_vertical = 0.0
-
+        # The support foot should stay on the ground (z=0)
+        support_vertical = float(self.foot_offset[2])  # Only apply foot offset if any
+        rotation_z = get_rotation_z(support_foot_target[2])
+        if rotation_as_quaternion:
+            return np.array([support_horizontal[0], support_horizontal[1], support_vertical] + convert_rotation_to_quaternion(rotation_z).ravel().tolist())
         support_foot_pose = np.eye(4, dtype=np.float32)
-        support_foot_pose[:3, 3:4] = np.array([support_horizontal[0], support_horizontal[1], support_vertical]).reshape(3,1)
-        support_foot_pose[:3, :3] = self.support_foot['target'][:3, :3]
+        support_foot_pose[:3, :3] = rotation_z
+        support_foot_pose[:2, 3] = support_horizontal.ravel()
+        support_foot_pose[2, 3] = support_vertical
         return support_foot_pose
 
     def update(self, robot_kd: KinematicsDynamics) -> None:
@@ -473,6 +430,7 @@ class OpenZMPWalk:
         robot_kd : KinematicsDynamics
             KinematicsDynamics instance for accessing and updating robot state
         """
+        raise NotImplementedError("Update method is not implemented")
         # Use robot_kd to get positions and orientations without storing it
         
         # Calculate the target torso and feet positions at the beginning of a step
@@ -483,19 +441,19 @@ class OpenZMPWalk:
             self._get_current_robot_state(robot_kd, next_supp_leg)
 
             logging.info(f"Next support leg: {next_supp_leg} - First step: {self.first_step}")
-            logging.info(f"Current swing foot position: {self.swing_foot['current'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.swing_foot['target'][:3, :3])}")
-            logging.info(f"Current support foot position: {self.support_foot['current'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.support_foot['target'][:3, :3])}")
-            logging.info(f"Current torso position: {self.torso['current'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.torso['target'][:3, :3])}")
+            logging.info(f"Current swing foot position: {self.swing_foot_fsp['initial'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.swing_foot_fsp['target'][:3, :3])}")
+            logging.info(f"Current support foot position: {self.support_foot_fsp['initial'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.support_foot_fsp['target'][:3, :3])}")
+            logging.info(f"Current torso position: {self.torso_fsp['initial'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.torso_fsp['target'][:3, :3])}")
             # Transform frames to support foot frame for footstep planning
             # Extract current support foot pose as the reference frame
             support_foot_pose = np.zeros((3, 1), dtype=np.float32)
-            support_foot_pose[:2, 0] = self.support_foot['current'][:2, 3]  # x, y position (in global frame)
-            support_foot_pose[2, 0] = convert_rotation_to_rpy(self.support_foot['current'][:3, :3])[2]  # yaw angle
+            support_foot_pose[:2, 0] = self.support_foot_fsp['initial'][:2, 3]  # x, y position (in global frame)
+            support_foot_pose[2, 0] = convert_rotation_to_rpy(self.support_foot_fsp['initial'][:3, :3])[2]  # yaw angle
             
             # Extract torso pose in global frame
             torso_pose = np.zeros((3, 1), dtype=np.float32)
-            torso_pose[:2, 0] = self.torso['current'][:2, 3]  # x, y position
-            torso_pose[2, 0] = convert_rotation_to_rpy(self.torso['current'][:3, :3])[2]  # yaw angle
+            torso_pose[:2, 0] = self.torso_fsp['initial'][:2, 3]  # x, y position
+            torso_pose[2, 0] = convert_rotation_to_rpy(self.torso_fsp['initial'][:3, :3])[2]  # yaw angle
             
             # Transform torso pose to support foot frame (support foot is at origin in its own frame)
             torso_in_support_frame = self.fsp.transform_from_frame(torso_pose, support_foot_pose)
@@ -508,11 +466,6 @@ class OpenZMPWalk:
                 torso_in_support_frame, next_supp_leg, sway=self.first_step)
             
             # Transform results back to global frame
-            # Create target transformation matrices
-            self.torso['target'] = self.torso['current'].copy()
-            self.swing_foot['target'] = self.swing_foot['current'].copy()
-            self.support_foot['target'] = self.support_foot['current'].copy()
-
             # Transform the planned torso and swing foot positions back to global frame (x,y,yaw)
             # Use transform_to_frame to transform from support foot frame to global frame
             # In this case, support_foot_pose is the reference frame in global coordinates
@@ -520,19 +473,19 @@ class OpenZMPWalk:
             swing_foot_plan_global = self.fsp.transform_to_frame(np.asarray(foot_pos_plan[1][1], dtype=np.float32).reshape(3, 1), self.global_frame[:3, 3])
 
             # Update positions in the target transformation matrices
-            self.torso['target'][:2, 3] = torso_plan_global[:2, 0]
+            self.torso_fsp['target'][:2, 3] = torso_plan_global[:2, 0]
             # Update only the yaw component while preserving roll and pitch
-            current_torso_rpy = convert_rotation_to_rpy(self.torso['current'][:3, :3])
-            self.torso['target'][:3, :3] = get_rotation_rpy(roll=current_torso_rpy[0], pitch=current_torso_rpy[1], yaw=torso_plan_global[2, 0])
+            current_torso_rpy = convert_rotation_to_rpy(self.torso_fsp['initial'][:3, :3])
+            self.torso_fsp['target'][:3, :3] = get_rotation_rpy(roll=current_torso_rpy[0], pitch=current_torso_rpy[1], yaw=torso_plan_global[2, 0])
             
-            self.swing_foot['target'][:2, 3] = swing_foot_plan_global[:2, 0]
+            self.swing_foot_fsp['target'][:2, 3] = swing_foot_plan_global[:2, 0]
             # Update only the yaw component while preserving roll and pitch
-            current_swing_foot_rpy = convert_rotation_to_rpy(self.swing_foot['current'][:3, :3])
-            self.swing_foot['target'][:3, :3] = get_rotation_rpy(roll=current_swing_foot_rpy[0], pitch=current_swing_foot_rpy[1], yaw=swing_foot_plan_global[2, 0])
+            current_swing_foot_rpy = convert_rotation_to_rpy(self.swing_foot_fsp['initial'][:3, :3])
+            self.swing_foot_fsp['target'][:3, :3] = get_rotation_rpy(roll=current_swing_foot_rpy[0], pitch=current_swing_foot_rpy[1], yaw=swing_foot_plan_global[2, 0])
             
-            logging.info(f"Target swing foot position: {self.swing_foot['target'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.swing_foot['target'][:3, :3])}")
-            logging.info(f"Target support foot position: {self.support_foot['target'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.support_foot['target'][:3, :3])}")
-            logging.info(f"Target torso position: {self.torso['target'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.torso['target'][:3, :3])}")
+            logging.info(f"Target swing foot position: {self.swing_foot_fsp['target'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.swing_foot_fsp['target'][:3, :3])}")
+            logging.info(f"Target support foot position: {self.support_foot_fsp['target'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.support_foot_fsp['target'][:3, :3])}")
+            logging.info(f"Target torso position: {self.torso_fsp['target'][:3, 3]}, rotation: {convert_rotation_to_rpy(self.torso_fsp['target'][:3, :3])}")
             
             # Transform ZMP points to global frame
             global_zmp_horizon = []
@@ -607,8 +560,8 @@ class OpenZMPWalk:
             support_foot_pos = support_foot_local[:3, 3]
             support_foot_rot = convert_rotation_to_rpy(support_foot_local[:3, :3])
             
-            logging.info(f'Local swing foot position: {swing_foot_pos}, rotation: {swing_foot_rot}')
-            logging.info(f'Local support foot position: {support_foot_pos}, rotation: {support_foot_rot}')
+            # logging.info(f'Local swing foot position: {swing_foot_pos}, rotation: {swing_foot_rot}')
+            # logging.info(f'Local support foot position: {support_foot_pos}, rotation: {support_foot_rot}')
             
             # Apply analytical IK for both legs
             if self.left_is_swing:

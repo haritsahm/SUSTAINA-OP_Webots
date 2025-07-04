@@ -12,6 +12,10 @@ controller:
   # Maximum simulation time in seconds (0 for infinite)
   max_simulation_time: 0
 
+body:
+  foot_separation: 0.054
+  com_height: 0.28
+
 # Walking parameters
 walking:
   # Step height in meters
@@ -20,21 +24,23 @@ walking:
   max_velocity: 0.2
   # Maximum angular velocity in rad/s
   max_angular_velocity: 0.5
+  # Preview steps
+  preview_steps: 4
 
 # State estimation parameters
 
 # ZMP Preview Controller parameters
 preview_control:
   # Sampling time in seconds
-  dt: 0.01
+  dt: 0.001
   # Preview horizon time in seconds
-  preview_t: 3.0
+  preview_t: 1.5
   # CoM height in meters
-  com_height: 0.283
+  com_height: ${body.com_height}
   # Penalty weight on control input (higher values make control more conservative)
   R: 1.0e-6
   # Penalty weight on ZMP tracking error (higher values prioritize tracking)
-  Qe: 0.9
+  Qe: 1.0
   # Penalty weight on differential CoM position
   Qdpos: 0.0
   # Penalty weight on differential CoM velocity
@@ -45,17 +51,15 @@ preview_control:
 # Foot Step Planner parameters
 foot_step_planner:
   # Maximum stride parameters
-  max_stride_x: 0.05
-  max_stride_y: 0.03
+  max_stride_x: 0.1
+  max_stride_y: 0.1
   max_stride_th: 0.2
-  # Number of steps to plan ahead
-  n_steps: 4
   # Foot separation (half of hip width)
-  foot_separation: 0.044
+  foot_separation: ${body.foot_separation}
   # Step timing parameters
-  t_step: 0.25
-  dsp_ratio: 0.15
-  dt: 0.01
+  t_step: 0.5
+  com_height: ${body.com_height}
+  dt: ${preview_control.dt}
   # Single support phase ratio (proportion of step time in single support)
   ssp_phase: 0.2
 

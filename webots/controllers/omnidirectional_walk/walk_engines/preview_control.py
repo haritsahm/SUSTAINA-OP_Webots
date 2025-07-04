@@ -15,6 +15,7 @@ import scipy
 from typing import Tuple
 from omegaconf import DictConfig
 
+CONST_G = 9.806
 
 class PreviewControl():
     """ZMP Preview Controller for humanoid walking pattern generation in the 2D plane.
@@ -57,7 +58,7 @@ class PreviewControl():
         # Store configuration parameters
         self.dt = preview_config.get('dt', 0.01)  # Sampling time (seconds)
         preview_t = preview_config.get('preview_t', 2.0)  # Preview horizon time (seconds)
-        self.n_preview = int(preview_t // self.dt)  # Number of preview steps
+        self.preview_horizon = int(preview_t // self.dt) + 1 # Number of preview steps
         
         # Store cost function weights
         self._R = preview_config.get('R', 1e-6)
@@ -65,10 +66,7 @@ class PreviewControl():
         self._Qdpos = preview_config.get('Qdpos', 0.0)
         self._Qdvel = preview_config.get('Qdvel', 0.0)
         self._Qdaccel = preview_config.get('Qdaccel', 0.0)
-        
-        # Gravitational acceleration (m/s²)
-        self.gravity = 9.8
-        
+                
         # Initialize private com_height variable
         self._com_height = None
         
@@ -119,7 +117,7 @@ class PreviewControl():
 
         # Output matrix C for ZMP (relates state to ZMP position)
         # ZMP = position - height/gravity * acceleration
-        self.C = np.matrix([1, 0, -self._com_height / self.gravity]).reshape((1, 3))
+        self.C = np.matrix([1, 0, -self.com_height / CONST_G]).reshape((1, 3))
 
         # Augmented state-space model including the error state
         # Augmented state: [error, position, velocity, acceleration]
@@ -158,11 +156,11 @@ class PreviewControl():
         preview_term = -closed_loop_A.T * riccati_solution * np.matrix([[1, 0, 0, 0]]).T * state_weights[0, 0]
 
         # Initialize preview gains array
-        preview_gains = np.zeros(self.n_preview)
+        preview_gains = np.zeros(self.preview_horizon)
         preview_gains[0] = -error_gain  # First preview gain
 
         # Calculate remaining preview gains
-        for i in range(1, self.n_preview):
+        for i in range(1, self.preview_horizon):
             preview_gains[i] = (gain_factor * augmented_B.T * preview_term)[0, 0]
             preview_term = closed_loop_A.T * preview_term
 
@@ -229,15 +227,15 @@ class PreviewControl():
         """
 
         # Extract and prepare future ZMP reference trajectory
-        zmp_ref_array = np.array(zmp_ref).flatten()
+        zmp_ref_array = np.asarray(zmp_ref).ravel()
         n_ref_points = len(zmp_ref_array)
         
         # If reference trajectory is shorter than preview window, pad with last value
-        if n_ref_points < self.n_preview:
-            n_padding = self.n_preview - n_ref_points
-            preview_window = np.hstack((zmp_ref_array[0:], np.ones(n_padding) * zmp_ref_array[-1]))
+        if n_ref_points < self.preview_horizon:
+            n_padding = self.preview_horizon - n_ref_points
+            preview_window = np.hstack((zmp_ref_array, np.ones(n_padding) * zmp_ref_array[-1]))
         else:
-            preview_window = zmp_ref_array[0:self.n_preview]
+            preview_window = zmp_ref_array[:self.preview_horizon]
 
         # Extract current state and accumulated error
         current_state, accumulated_error = state_err
