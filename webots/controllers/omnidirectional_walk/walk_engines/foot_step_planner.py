@@ -635,122 +635,137 @@ class FootStepPlanner():
 
         Parameters
         ----------
-        initial_support_foot : array-like, shape (3,) or (2,)
-            Initial support foot pose [x, y, theta] or position [x, y] in global frame
-        initial_torso : array-like, shape (3,) or (2,)
-            Initial torso pose [x, y, theta] or position [x, y] in global frame
-        target_torso : array-like, shape (3,) or (2,)
-            Target torso pose [x, y, theta] or position [x, y] in global frame
+        initial_support_foot : np.ndarray, shape (3,) or (2,)
+            Initial support foot pose [x, y, theta] or position [x, y] in global frame.
+            Only x, y components are used and reshaped to (2, 1).
+        initial_torso : np.ndarray, shape (3,) or (2,)
+            Initial torso pose [x, y, theta] or position [x, y] in global frame.
+            Only x, y components are used and reshaped to (2, 1).
+        target_torso : np.ndarray, shape (3,) or (2,)
+            Target torso pose [x, y, theta] or position [x, y] in global frame.
+            Only x, y components are used and reshaped to (2, 1).
 
         Returns
         -------
-        aP : ndarray, shape (2,)
-            Coefficient for the positive exponential term (exp(t/T))
-        aN : ndarray, shape (2,)
-            Coefficient for the negative exponential term (exp(-t/T))
-        M_i : ndarray, shape (2,)
-            Initial transition vector for the step
-        N_i : ndarray, shape (2,)
-            Final transition vector for the step
+        aP : np.ndarray, shape (2, 1)
+            Coefficient for the positive exponential term (exp(t/T)) in x, y directions.
+        aN : np.ndarray, shape (2, 1)
+            Coefficient for the negative exponential term (exp(-t/T)) in x, y directions.
+        M_i : np.ndarray, shape (2, 1)
+            Initial transition vector from support foot to initial CoM, scaled by SSP duration.
+        N_i : np.ndarray, shape (2, 1)
+            Final transition vector from support foot to target CoM, scaled by (1-DSP) duration.
 
         Notes
         -----
         The method uses the following steps:
-        1. Extract 2D positions from input poses
-        2. Compute transition vectors M_i and N_i for boundary conditions
-        3. Calculate transition terms using time constants and phase durations
-        4. Solve for coefficients aP and aN using exponential terms
+        1. Extract and reshape 2D positions from input poses to column vectors (2, 1)
+        2. Compute transition vectors M_i and N_i using phase timings:
+           - M_i = (support_foot - initial_com) / ssp_phase
+           - N_i = -(support_foot - target_com) / (1 - dsp_phase)
+        3. Calculate transition terms with time constants:
+           - trans_term_0 = M_i * t_zmp * sinh(-ssp_phase/phi_zmp)
+           - trans_term_1 = N_i * t_zmp * sinh((1-dsp_phase)/phi_zmp)
+        4. Solve for coefficients using α = 1/phi_zmp:
+           - aP = (trans_term_1 - trans_term_0*exp(-α)) / (exp(α) - exp(-α))
+           - aN = (trans_term_0*exp(α) - trans_term_1) / (exp(α) - exp(-α))
 
-        The coefficients satisfy the boundary conditions:
-        - At phi=0: Initial CoM position and velocity
-        - At phi=1: Final CoM position and velocity
+        The coefficients ensure boundary conditions are met at:
+        - phi=0: Initial CoM position and velocity match the support phase
+        - phi=1: Final CoM position and velocity match the target state
         """
         support_foot_xy = np.array(initial_support_foot[:2]).reshape(2, 1)
         initial_com_xy = np.array(initial_torso[:2]).reshape(2, 1)
         target_com_xy = np.array(target_torso[:2]).reshape(2, 1)
         
-        alpha = 1.0 / self.phi_zmp
-        
         M_i = (support_foot_xy - initial_com_xy) / self.ssp_phase
         N_i = -(support_foot_xy - target_com_xy) / (1 - self.dsp_phase)
                 
-        ssp_ratio = self.ssp_phase / self.phi_zmp
-        term_0_factor = -ssp_ratio + np.sinh(ssp_ratio)
-        trans_term_0 = -M_i * self.t_zmp * term_0_factor
+        trans_term_0 = M_i * self.t_zmp * np.sinh(-self.ssp_phase / self.phi_zmp)
+        trans_term_1 = N_i * self.t_zmp * np.sinh((1 - self.dsp_phase) / self.phi_zmp)
         
-        phase_diff = (1 - self.dsp_phase) / self.phi_zmp
-        term_1_factor = phase_diff - np.sinh(phase_diff)
-        trans_term_1 = -N_i * self.t_zmp * term_1_factor
-        
+        alpha = 1.0 / self.phi_zmp
         exp_alpha = np.exp(alpha)
         exp_neg_alpha = np.exp(-alpha)
         denom = exp_alpha - exp_neg_alpha
         
-        aP = (trans_term_1 - trans_term_0 * exp_neg_alpha ) / denom
-        aN = (trans_term_0 * exp_alpha - trans_term_1) / denom
+        aP = (trans_term_1 - trans_term_0*exp_neg_alpha) / denom
+        aN = (trans_term_0*exp_alpha - trans_term_1) / denom
         
         return aP, aN, M_i, N_i
 
-    def calculate_analytical_com(self, phi: float, zmp_pos: np.ndarray, 
+    def calculate_analytical_com(self, phi: float, support_foot: np.ndarray, 
                                 M_transition: np.ndarray, N_transition: np.ndarray,
                                 aP: np.ndarray, aN: np.ndarray) -> np.ndarray:
         """Calculate analytical CoM position using LIPM solution.
 
         Computes the Center of Mass (CoM) position at a given phase using the Linear
-        Inverted Pendulum Model (LIPM). The solution combines:
-        1. Particular solution: Current ZMP position
-        2. Homogeneous solution: exp(±t/T) terms with coefficients aP, aN
-        3. Transition terms: Additional dynamics during support phase changes
+        Inverted Pendulum Model (LIPM). The solution combines particular solution,
+        homogeneous solution, and phase-dependent transition terms.
 
         Parameters
         ----------
         phi : float
-            Current phase in the step cycle (0 ≤ φ ≤ 1)
-        zmp_pos : ndarray, shape (2,)
-            Current Zero Moment Point (ZMP) position [x, y] in global frame
-        M_transition : ndarray, shape (2,)
-            Initial transition vector from CoM to support foot
-        N_transition : ndarray, shape (2,)
-            Final transition vector from support foot to target CoM
-        aP : ndarray, shape (2,)
-            Coefficient for positive exponential term exp(t/T)
-        aN : ndarray, shape (2,)
-            Coefficient for negative exponential term exp(-t/T)
+            Current phase in the step cycle (0 ≤ φ ≤ 1).
+            Used to compute exp(±φ/T) terms and determine support phase.
+        support_foot : np.ndarray, shape (2, 1)
+            Current support foot position [x, y] in global frame.
+            Forms the particular solution of the LIPM equation.
+        M_transition : np.ndarray, shape (2, 1)
+            Initial transition vector from support foot to initial CoM.
+            Active during initial single support phase (0 ≤ φ < ssp_phase).
+        N_transition : np.ndarray, shape (2, 1)
+            Final transition vector from support foot to target CoM.
+            Active during final single support phase (dsp_phase ≤ φ < 1).
+        aP : np.ndarray, shape (2, 1)
+            Coefficient for positive exponential term exp(φ/T).
+            Part of homogeneous solution for boundary value problem.
+        aN : np.ndarray, shape (2, 1)
+            Coefficient for negative exponential term exp(-φ/T).
+            Part of homogeneous solution for boundary value problem.
 
         Returns
         -------
-        ndarray, shape (2,)
-            Computed CoM position [x, y] in global frame
+        np.ndarray, shape (2, 1)
+            Computed CoM position [x, y] in global frame.
+            Combines particular, homogeneous, and transition solutions.
 
         Notes
         -----
-        The solution structure varies by phase:
-        - Initial SSP (0 ≤ φ < ssp_phase):
-          CoM = ZMP + aP·exp(t/T) + aN·exp(-t/T) + M_transition·transition_term
-        - DSP (ssp_phase ≤ φ < dsp_phase):
-          CoM = ZMP + aP·exp(t/T) + aN·exp(-t/T)
-        - Final SSP (dsp_phase ≤ φ < 1):
-          CoM = ZMP + aP·exp(t/T) + aN·exp(-t/T) + N_transition·transition_term
-        - Beyond step (φ ≥ 1): CoM = ZMP
+        The complete solution varies by phase:
+
+        1. Initial Single Support Phase (0 ≤ φ < ssp_phase):
+           CoM = ZMP + aP·exp(φ/T) + aN·exp(-φ/T) + 
+                 M_transition·(φ - ssp_phase - T·sinh((φ - ssp_phase)/T))
+
+        2. Double Support Phase (ssp_phase ≤ φ < dsp_phase):
+           CoM = ZMP + aP·exp(φ/T) + aN·exp(-φ/T)
+
+        3. Final Single Support Phase (dsp_phase ≤ φ < 1):
+           CoM = ZMP + aP·exp(φ/T) + aN·exp(-φ/T) + 
+                 N_transition·(φ - dsp_phase - T·sinh((φ - dsp_phase)/T))
+
+        4. Beyond Step (φ ≥ 1): 
+           CoM = ZMP
+
+        Where:
+        - T = phi_zmp (time constant of the LIPM)
+        - exp(±φ/T) are the homogeneous solution terms
+        - Transition terms include both linear and hyperbolic components
         """
         exp_p = np.exp(phi / self.phi_zmp)
         exp_n = np.exp(-phi / self.phi_zmp)
         homogeneous_term = aP * exp_p + aN * exp_n
+        com_pos = support_foot + homogeneous_term
 
         if phi >= 0 and phi < self.ssp_phase:
-            phase_diff = phi - self.ssp_phase
-            transition_term = M_transition * self.t_zmp * (
-                (phase_diff / self.phi_zmp) - np.sinh(phase_diff / self.phi_zmp)
-            )
-            return zmp_pos + homogeneous_term + transition_term
-        elif phi >= self.ssp_phase and phi < self.dsp_phase:
-            return zmp_pos + homogeneous_term
+            factor = phi - self.ssp_phase
+            com_pos += M_transition * factor - M_transition * self.t_zmp * np.sinh(factor / self.phi_zmp)
         elif phi >= self.dsp_phase and phi < 1:
-            phase_diff = phi - self.dsp_phase
-            transition_term = N_transition * self.t_zmp * (
-                (phase_diff / self.phi_zmp) - np.sinh(phase_diff / self.phi_zmp)
-            )
-            return zmp_pos + homogeneous_term + transition_term
+            factor = phi - self.dsp_phase
+            com_pos += N_transition * factor - N_transition * self.t_zmp * np.sinh(factor / self.phi_zmp)
+        
+        return com_pos
 
     def generate_complete_zmp_trajectory(self, step_data: Dict) -> List[Dict[str, Union[float, List[float]]]]:
         """Generate complete Zero Moment Point trajectory for a single step.
@@ -884,19 +899,11 @@ class FootStepPlanner():
             t = j * self.dt
             phi = t / self.t_step
             
-            # Get current ZMP position
-            zmp_global = self.calculate_piecewise_zmp(
-                phi=phi,
-                initial_support_foot=support_foot_xy,
-                initial_torso=initial_torso_xy,
-                target_torso=target_torso_xy
-            )
-            
             # Calculate CoM position
             if phi >= 0 and phi < 1.0:
                 com_global = self.calculate_analytical_com(
                     phi=phi,
-                    zmp_pos=zmp_global,
+                    support_foot=support_foot_xy,
                     M_transition=M_i,
                     N_transition=N_i,
                     aP=aP,
@@ -914,6 +921,12 @@ class FootStepPlanner():
             
             # Add ZMP position if requested
             if with_zmp:
+                zmp_global = self.calculate_piecewise_zmp(
+                    phi=phi,
+                    initial_support_foot=support_foot_xy,
+                    initial_torso=initial_torso_xy,
+                    target_torso=target_torso_xy
+                )
                 point['zmp_position'] = zmp_global.ravel().tolist()
             
             com_trajectory.append(point)        
