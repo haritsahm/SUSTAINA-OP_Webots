@@ -530,7 +530,7 @@ def update_coordinate_frame(frame_artists, pose, frame_length):
     frame_artists[2].set_data_3d(
         position[0] + z_line[:, 0], position[1] + z_line[:, 1], position[2] + z_line[:, 2])
 
-def plot_3d_trajectory(left_foot_pos, right_foot_pos, torso_pos, zmp_points, dt_sim):
+def plot_3d_trajectory(left_foot_pos, right_foot_pos, torso_pos, zmp_points, dt_sim, save_video=False, video_filename='walking_animation.mp4'):
     """Create 3D visualization of walking trajectory with animation.
     
     Args:
@@ -538,6 +538,9 @@ def plot_3d_trajectory(left_foot_pos, right_foot_pos, torso_pos, zmp_points, dt_
         right_foot_pos (np.ndarray): Right foot positions (N, 3)
         torso_pos (np.ndarray): Torso positions (N, 3)
         zmp_points (np.ndarray): ZMP trajectory points (N, 3)
+        dt_sim (float): Simulation time step in seconds
+        save_video (bool, optional): Whether to save animation as video. Defaults to False.
+        video_filename (str, optional): Output video filename. Defaults to 'walking_animation.mp4'.
     """
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
@@ -618,12 +621,26 @@ def plot_3d_trajectory(left_foot_pos, right_foot_pos, torso_pos, zmp_points, dt_
                 left_trail, right_trail, torso_trail, zmp_trail)
     
     # Create animation
-    anim = animation.FuncAnimation(fig, update, frames=len(left_foot_pos),
-                                 interval=dt_sim * 1000, blit=True)
+    num_frames = len(left_foot_pos)
+    interval = dt_sim * 1000  # Convert to milliseconds
+    anim = animation.FuncAnimation(fig, update, frames=num_frames,
+                                 interval=interval, blit=True)
     
+    if save_video:
+        # Set up the writer with desired settings
+        print(f"Creating video: {video_filename} with {num_frames} frames and fps: {int(1/dt_sim)}")
+        writer = animation.FFMpegWriter(
+            fps=int(1/dt_sim),  # FPS based on simulation timestep
+            metadata=dict(artist='SUSTAINA-OP'),
+            bitrate=2000
+        )
+        # Save the animation
+        anim.save(video_filename, writer=writer)
+        print(f"Animation saved to {video_filename}")
+
     plt.show()
 
-def plot_time_series(time_points, left_foot_pos, right_foot_pos, torso_pos, zmp_points):
+def plot_time_series(time_points, left_foot_pos, right_foot_pos, torso_pos, zmp_points, save_plot=False, plot_filename='walking_plots.png'):
     """Create time series plots of walking trajectory.
     
     Args:
@@ -669,6 +686,8 @@ def plot_time_series(time_points, left_foot_pos, right_foot_pos, torso_pos, zmp_
     ax3.legend()
     
     plt.tight_layout()
+    if save_plot:
+        plt.savefig(plot_filename)
     plt.show()
 
 if __name__ == '__main__':
@@ -680,7 +699,7 @@ if __name__ == '__main__':
     )
     config = OmegaConf.load(config_path)
 
-    walk_engine = OpenZMPWalkSimAnalytical(config)
+    walk_engine = OpenZMPWalkSimPC(config)
     print('Walk engine initialized')
 
     init_torso_pos = np.zeros(3)
@@ -743,7 +762,7 @@ if __name__ == '__main__':
     
     print('Creating plots')    
     # Plot time series
-    plot_time_series(time_points, left_foot_pos, right_foot_pos, torso_pos, zmp_points)
+    plot_time_series(time_points, left_foot_pos, right_foot_pos, torso_pos, zmp_points, save_plot=True, plot_filename='walking_plots.png')
 
     # Plot 3D trajectory
-    plot_3d_trajectory(left_foot_pos, right_foot_pos, torso_pos, zmp_points, dt_sim=walk_engine.dt_sim)
+    plot_3d_trajectory(left_foot_pos, right_foot_pos, torso_pos, zmp_points, dt_sim=walk_engine.dt_sim, save_video=True, video_filename='walking_animation.mp4')
