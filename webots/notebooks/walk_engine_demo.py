@@ -20,16 +20,61 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
                                             'controllers', 'omnidirectional_walk')))
 
 # Import the FootStepPlanner and PreviewControl classes
-from walk_engines.open_zmp_walk import OpenZMPWalk
+from walk_engines.open_zmp_walk import OpenZMPWalk, SupportLeg
 from mathematics.linear_algebra import convert_quaternion_to_rpy, convert_quaternion_to_rotation
 
 
-class OpenZMPWalkSim(OpenZMPWalk):
+class OpenZMPWalkSimPC(OpenZMPWalk):
     """Simulation extension of OpenZMPWalk for testing and visualization.
 
-    This class overrides key methods of OpenZMPWalk to work in a simulation
-    environment, focusing on trajectory generation and frame updates without
-    the need for actual robot hardware.
+    This class extends OpenZMPWalk to provide a simulation environment for testing
+    the preview control-based walking pattern generator without requiring physical
+    hardware or the Webots simulator.
+
+    Parameters
+    ----------
+    config : DictConfig
+        Configuration dictionary containing walking parameters:
+        - preview_window : int
+            Number of future steps to preview
+        - step_time : float
+            Duration of a single step in seconds
+        - sim_dt : float
+            Simulation time step in seconds
+
+    Attributes
+    ----------
+    swap_trigged : bool
+        Flag indicating if a foot swap is triggered at step completion
+    t_sim : float
+        Current simulation time within step
+    dt_sim : float
+        Simulation time step
+    steps_count : int
+        Number of steps taken
+    left_is_swing : bool
+        True if left foot is current swing foot
+    state_x, state_y : np.ndarray
+        Preview control states for x and y directions
+    swing_foot_traj, support_foot_traj : Dict[str, np.ndarray]
+        Current foot trajectories with positions and orientations
+    torso_traj : Dict[str, np.ndarray]
+        Current torso trajectory
+
+    Notes
+    -----
+    The simulation workflow:
+    1. Frame Management:
+       - Maintains separate frames for robot state and foot step planning
+       - Handles conversions between quaternions and Euler angles
+    2. Trajectory Generation:
+       - Computes preview control-based CoM trajectory
+       - Generates smooth foot trajectories for swing and support phases
+       - Updates torso orientation during walking
+    3. State Updates:
+       - Tracks simulation time and step completion
+       - Manages support foot transitions
+       - Updates preview control states
     """
     def __init__(self, config: DictConfig):
         super().__init__(config)
@@ -40,20 +85,40 @@ class OpenZMPWalkSim(OpenZMPWalk):
                     right_foot_pos: np.ndarray, right_foot_quat: np.ndarray) -> None:
         """Reset robot frames with given positions and orientations.
 
+        Initialize both robot state containers and foot step planner frames with
+        the provided positions and orientations. Also initializes preview control
+        states using the initial torso position.
+
         Parameters
         ----------
         torso_pos : np.ndarray, shape (3,)
-            Position [x, y, z] of torso in global frame
+            Position [x, y, z] of torso in global frame.
+            Used for both robot state and FSP initialization.
         torso_quat : np.ndarray, shape (4,)
-            Orientation [qw, qx, qy, qz] of torso in global frame
+            Orientation [qw, qx, qy, qz] of torso in global frame.
+            Converted to yaw angle for FSP frame.
         left_foot_pos : np.ndarray, shape (3,)
-            Position of left foot in global frame
+            Position [x, y, z] of left foot in global frame.
+            Used for both robot state and FSP initialization.
         left_foot_quat : np.ndarray, shape (4,)
-            Orientation of left foot in global frame
+            Orientation [qw, qx, qy, qz] of left foot in global frame.
+            Converted to yaw angle for FSP frame.
         right_foot_pos : np.ndarray, shape (3,)
-            Position of right foot in global frame
+            Position [x, y, z] of right foot in global frame.
+            Used for both robot state and FSP initialization.
         right_foot_quat : np.ndarray, shape (4,)
-            Orientation of right foot in global frame
+            Orientation [qw, qx, qy, qz] of right foot in global frame.
+            Converted to yaw angle for FSP frame.
+
+        Notes
+        -----
+        The method performs three main tasks:
+        1. Updates robot state containers (7D vectors with pos + quat)
+        2. Initializes FSP frames (3D vectors with x, y, yaw)
+        3. Sets up preview control states for x and y directions
+
+        The preview control initialization assumes zero velocity and
+        acceleration, using only the initial position as reference.
         """
         # Update robot state containers (7D vectors)
         self.torso_robot[:3] = torso_pos
@@ -79,12 +144,32 @@ class OpenZMPWalkSim(OpenZMPWalk):
         """Update foot and torso trajectories based on current state.
 
         Generates smooth trajectories for swing foot, support foot, and torso
-        using the current simulation time and target positions.
+        using the current simulation time and target positions. Handles both
+        left and right swing phases appropriately.
 
         Parameters
         ----------
         com_xy : np.ndarray, shape (2,)
-            Current CoM position [x, y] from preview control
+            Current CoM position [x, y] from preview control.
+            Used to update torso trajectory while maintaining height.
+
+        Notes
+        -----
+        The trajectory generation process:
+        1. Swing Foot:
+           - Interpolates between initial and target poses
+           - Adds vertical motion for foot clearance
+           - Maintains orientation continuity
+        2. Support Foot:
+           - Remains fixed during single support
+           - Smooth transition during double support
+        3. Torso:
+           - Follows CoM position in x-y plane
+           - Maintains constant height
+           - Smooth orientation changes
+
+        All trajectories use quaternion representation for rotation
+        to ensure continuous orientation changes.
         """
         # Select appropriate foot frames based on swing state
         if self.left_is_swing:
@@ -105,18 +190,46 @@ class OpenZMPWalkSim(OpenZMPWalk):
     def update(self):
         """Generate N-step preview and update walking state.
 
-        This method performs three main tasks:
-        1. At step start (t_sim = 0):
+        Core method implementing the preview control-based walking pattern
+        generation. Handles step planning, trajectory generation, and state
+        updates in a cyclic manner.
+
+        The method operates in three phases based on t_sim:
+
+        1. Step Start (t_sim = 0):
            - Generates N preview steps using foot step planner
-           - Computes complete ZMP trajectory for preview horizon
-           - Updates target poses for current step
-        2. During step execution:
-           - Updates COM trajectory using preview control
-           - Generates smooth foot trajectories
-           - Maintains ZMP reference horizon
-        3. At step completion:
-           - Swaps support and swing feet
-           - Updates step counter and timing
+           - Computes complete ZMP reference trajectory
+           - Updates target poses for feet and torso
+           - Initializes preview control for new step
+
+        2. Step Execution (0 < t_sim < t_step):
+           - Updates CoM trajectory using preview control
+           - Generates smooth swing and support foot trajectories
+           - Maintains rolling ZMP reference horizon
+           - Updates simulation time
+
+        3. Step Completion (t_sim >= t_step):
+           - Triggers foot swap mechanism
+           - Updates step counter
+           - Resets simulation time
+           - Prepares for next step
+
+        Notes
+        -----
+        Preview Control Implementation:
+        - Uses N future ZMP references
+        - Optimizes CoM trajectory for stability
+        - Maintains preview window by shifting references
+
+        State Management:
+        - Tracks current support leg
+        - Updates foot positions and orientations
+        - Maintains timing and phase information
+
+        The method ensures:
+        - Continuous and smooth trajectories
+        - Dynamic stability through preview control
+        - Proper timing of support transitions
         """
         # Generate new preview sequence at step start
         if self.t_sim == 0:
@@ -170,6 +283,171 @@ class OpenZMPWalkSim(OpenZMPWalk):
         self.t_sim += self.dt_sim
         self.current_zmp = self.zmp_horizon[0].copy()
         self.zmp_horizon = self.zmp_horizon[1:]
+
+        # Handle step completion
+        if self.t_sim >= self.fsp.t_step:
+            self.swap_trigged = True
+            self.t_sim = 0
+            self.steps_count += 1
+            self.swap_foot()
+
+
+class OpenZMPWalkSimAnalytical(OpenZMPWalkSimPC):
+    """Analytical solution-based ZMP walking pattern generator simulation.
+
+    This class implements a walking pattern generator using analytical solutions
+    of the Linear Inverted Pendulum Model (LIPM) instead of preview control.
+    It inherits from OpenZMPWalkSimPC but replaces the preview control-based
+    CoM generation with analytical solutions.
+
+    Parameters
+    ----------
+    config_path : str
+        Path to the configuration YAML file containing walking parameters.
+        Inherits parameter loading from OpenZMPWalkSimPC.
+
+    Attributes
+    ----------
+    analytical_params : dict
+        Dictionary storing analytical solution parameters:
+        - 'aP' : np.ndarray, shape (2, 1)
+            Coefficient for positive exponential term.
+        - 'aN' : np.ndarray, shape (2, 1)
+            Coefficient for negative exponential term.
+        - 'M_i' : np.ndarray, shape (2, 1)
+            Initial transition vector.
+        - 'N_i' : np.ndarray, shape (2, 1)
+            Final transition vector.
+    t_sim : float
+        Current simulation time within a step cycle.
+    dt_sim : float
+        Simulation time step.
+    steps_count : int
+        Number of steps taken.
+    left_is_swing : bool
+        True if left foot is current swing foot.
+    next_support_leg : SupportLeg
+        Enum indicating next support leg (LEFT or RIGHT).
+
+    Notes
+    -----
+    The analytical solution approach:
+    1. At step start (t_sim = 0):
+       - Calculates single step using foot step planner
+       - Computes boundary constraints and transition vectors
+       - Updates target poses for feet and torso
+    2. During step (0 < t_sim < t_step):
+       - Computes CoM trajectory using analytical LIPM solution
+       - Updates ZMP position using piecewise function
+       - Generates foot trajectories
+    3. At step end (t_sim >= t_step):
+       - Swaps support and swing feet
+       - Resets simulation time
+       - Increments step counter
+    """
+    def __init__(self, config_path):
+        super().__init__(config_path)
+        self.analytical_params = {'aP': None, 'aN': None, 'M_i': None, 'N_i': None}
+
+    def update(self):
+        """Update the walking pattern generator state for one simulation step.
+
+        This method implements the core logic of the analytical LIPM-based walking
+        pattern generation. It handles step initialization, CoM/ZMP trajectory
+        computation, and step transitions.
+
+        The update process follows these stages:
+        1. Step Initialization (t_sim = 0):
+           - Generate next step data using foot step planner
+           - Compute analytical solution parameters (aP, aN, M_i, N_i)
+           - Update target poses for next step
+        2. Trajectory Generation:
+           - Calculate current phase (phi = t_sim / t_step)
+           - Compute CoM position using analytical solution
+           - Update ZMP position using piecewise function
+           - Generate foot trajectories
+        3. State Update:
+           - Increment simulation time
+           - Handle step completion and foot swapping
+
+        Notes
+        -----
+        The method uses the following key components:
+        - Foot step planner (self.fsp) for step generation
+        - Analytical LIPM solution for CoM trajectory
+        - Piecewise ZMP trajectory generation
+        - Foot trajectory interpolation
+
+        The analytical solution ensures:
+        - Smooth CoM trajectory meeting boundary conditions
+        - Phase-appropriate ZMP positions
+        - Proper timing of support foot transitions
+        """
+        pass
+
+        # Generate new preview sequence at step start
+        if self.t_sim == 0:
+            step_data = self.fsp.calculate_single_step(
+                vel_cmd=self.cmd_vel,
+                left_foot=self.left_foot_fsp['initial'],
+                right_foot=self.right_foot_fsp['initial'],
+                current_torso=self.torso_fsp['initial'],
+                next_support_leg=self.next_support_leg
+            )
+
+            support_leg = step_data['SF']
+            if support_leg == SupportLeg.LEFT:
+                support_foot_xy = step_data['L'][:2].reshape(2, 1)
+            elif support_leg == SupportLeg.RIGHT:
+                support_foot_xy = step_data['R'][:2].reshape(2, 1)
+            else:
+                raise ValueError(f"Unknown support leg type: {support_leg}")
+            
+            initial_torso_xy = step_data['C'][:2].reshape(2, 1)
+            target_torso_xy = step_data['next_C'][:2].reshape(2, 1)
+
+            # Get boundary constraints and transition vectors
+            aP, aN, M_i, N_i = self.fsp.compute_boundary_com_constraints(
+                initial_support_foot=support_foot_xy,
+                initial_torso=initial_torso_xy,
+                target_torso=target_torso_xy
+            )
+            self.analytical_params['aP'] = aP
+            self.analytical_params['aN'] = aN
+            self.analytical_params['M_i'] = M_i
+            self.analytical_params['N_i'] = N_i
+
+            # Update target poses from first preview step
+            self.left_foot_fsp['target'] = step_data['next_L']
+            self.right_foot_fsp['target'] = step_data['next_R']
+            self.torso_fsp['target'] = step_data['next_C']
+            self.next_support_leg = step_data['next_SF']
+
+        # Update COM trajectory using preview control
+        phi = self.t_sim / self.fsp.t_step
+        support_foot_xy = self.right_foot_fsp['initial'][:2] if self.left_is_swing else self.left_foot_fsp['initial'][:2]
+        support_foot_xy = support_foot_xy.reshape(2, 1)
+        com_xy = self.fsp.calculate_analytical_com(
+            phi=phi,
+            support_foot=support_foot_xy,
+            M_transition=self.analytical_params['M_i'],
+            N_transition=self.analytical_params['N_i'],
+            aP=self.analytical_params['aP'],
+            aN=self.analytical_params['aN']
+        ).ravel()
+        zmp_pos = self.fsp.calculate_piecewise_zmp(
+            phi=phi,
+            initial_support_foot=support_foot_xy,
+            initial_torso=self.torso_fsp['initial'][:2].reshape(2, 1),
+            target_torso=self.torso_fsp['target'][:2].reshape(2, 1)
+        ).ravel()
+
+        # Generate trajectories
+        self.update_trajectories(com_xy)
+
+        # Update simulation state
+        self.t_sim += self.dt_sim
+        self.current_zmp = zmp_pos
 
         # Handle step completion
         if self.t_sim >= self.fsp.t_step:
@@ -402,7 +680,7 @@ if __name__ == '__main__':
     )
     config = OmegaConf.load(config_path)
 
-    walk_engine = OpenZMPWalkSim(config)
+    walk_engine = OpenZMPWalkSimAnalytical(config)
     print('Walk engine initialized')
 
     init_torso_pos = np.zeros(3)
@@ -413,7 +691,7 @@ if __name__ == '__main__':
     init_right_foot_quat = np.array([1, 0, 0, 0])
     walk_engine.reset_frames(init_torso_pos, init_torso_quat, init_left_foot_pos, init_left_foot_quat, init_right_foot_pos, init_right_foot_quat)
 
-    vel_cmd = (0.1, 0., 0.1)
+    vel_cmd = (0.1, 0., 0.0)
     n_steps = 8
 
     walk_engine.set_walking_command(*vel_cmd)
